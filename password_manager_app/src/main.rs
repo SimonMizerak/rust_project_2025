@@ -8,6 +8,10 @@ use ratatui::layout::Direction;
 use ratatui::widgets::{List, ListItem, ListState};
 use std::{thread, time::Duration};
 use rusqlite::Connection;
+use ratatui::widgets::Wrap;
+use ratatui::text::Text;
+use ratatui::text::Line;
+
 
 
 fn read_input(prompt: &str) -> String {
@@ -43,6 +47,13 @@ enum AppState {
         password: String,
         input_buffer: String, // <- tu
     },
+    ShowAllVaults {
+        entries: Vec<(String, String, String)>, // alebo prispôsob podľa tvojej DB
+        scroll: u16, // <--- toto
+        selected: usize,           // <--- pridaj toto
+        show_password: bool,
+    },
+
 }
 
 
@@ -101,7 +112,7 @@ impl MenuState {
     }
 }
 
-const MENU_ITEMS: [&str; 5] = ["Create vault", "Show all vaults", "Search specific vault", "Delete vault", "End"];
+const MENU_ITEMS: [&str; 5] = ["Create vault", "Search specific vault", "Show all vaults", "Delete vault", "End"];
 
 
 fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8; 32], conn: &Connection, state: &mut AppState,) -> Result<(), Box<dyn std::error::Error>> {
@@ -168,9 +179,37 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                         .block(Block::default().title("Adding Vault manually").borders(Borders::ALL));
                     f.render_widget(paragraph, chunks[1]);
                 }
+
+                AppState::ShowAllVaults { entries, scroll, selected, show_password } => {
+                    let mut lines = vec![];
+
+                    for (i, (acc, user, enc)) in entries.iter().enumerate().skip(*scroll as usize) {
+                        let mut line = format!("{} | {}", acc, user);
+                        if *show_password && i == *selected {
+                            let encrypted_bytes = base64::decode(enc).unwrap_or_default();
+                            let decrypted = decrypt(&encrypted_bytes, key).unwrap_or("ERR".to_string());
+                            line += &format!(" | {}", decrypted);
+                        }
+
+                        // Zvýrazni vybraný riadok
+                        let styled_line = if i == *selected {
+                            Span::styled(line, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+                        } else {
+                            Span::raw(line)
+                        };
+
+                        lines.push(Line::from(vec![styled_line]));
+                    }
+
+                    let paragraph = Paragraph::new(Text::from(lines))
+                        .style(Style::default().fg(Color::LightCyan))
+                        .block(Block::default().title("Vaulty").borders(Borders::ALL))
+                        .wrap(Wrap { trim: false });
+
+                    f.render_widget(paragraph, chunks[1]);
+                }
+
             }
-
-
         })?;
 
         if event::poll(std::time::Duration::from_millis(200))? {
@@ -199,7 +238,19 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                     };
                                 }
                                 1 => { /* vyhľadať specifiv */ }
-                                2 => { /* show all */ }
+                                2 => {
+                                    let vaults = get_passwords(conn)?
+                                        .into_iter()
+                                        .map(|(acc, user, enc)| (acc, user, base64::encode(enc)))
+                                        .collect();
+
+                                    *state = AppState::ShowAllVaults {
+                                        entries: vaults,
+                                        scroll: 0,
+                                        selected: 0,
+                                        show_password: false,
+                                    };
+                                }
                                 3 => { /* vymazať */ }
                                 4 => return Ok(()),
                                 _ => {}
@@ -208,6 +259,45 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                             _ => {}
                         }
                     }
+
+                    AppState::ShowAllVaults { scroll, selected, show_password, entries } => {
+                        match code {
+                            KeyCode::Esc => {
+                                *state = AppState::Menu;
+                            }
+                            KeyCode::Down => {
+                                if *selected < entries.len().saturating_sub(1) {
+                                    *selected += 1;
+                                    if *selected as u16 >= *scroll + 10 {
+                                        *scroll += 1;
+                                    }
+                                }
+                            }
+                            KeyCode::Up => {
+                                if *selected > 0 {
+                                    *selected -= 1;
+                                    if *selected as u16 <= *scroll && *scroll > 0 {
+                                        *scroll -= 1;
+                                    }
+                                }
+                            }
+                            KeyCode::Enter => {
+                                *show_password = !*show_password; // toggle zobrazovania hesla
+                            }
+                            _ => {}
+                        }
+                    }
+
+
+                    AppState::ShowAllVaults { .. } => {
+                        match code {
+                            KeyCode::Esc => {
+                                *state = AppState::Menu;
+                            }
+                            _ => {}
+                        }
+                    }
+
 
                     AppState::CreateAccount {
                         step,

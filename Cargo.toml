@@ -1,0 +1,6 @@
+[workspace]
+
+members = [
+    "password_manager_lib",
+    "password_manager_app"
+]

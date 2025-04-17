@@ -1,0 +1,11 @@
+[package]
+name = "password_manager_app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+password_manager_lib = { path = "../password_manager_lib" }
+ratatui = "0.26"
+crossterm = "0.27"
+rusqlite = "0.31"
+base64 = "0.21"

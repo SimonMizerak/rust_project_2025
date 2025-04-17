@@ -1,0 +1,11 @@
+[package]
+name = "password_manager_lib"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+argon2 = "0.5"
+aes-gcm = "0.10"
+aes = "0.8"
+rand = "0.8"
+rusqlite = { version = "0.31", features = ["bundled"] }

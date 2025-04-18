@@ -40,6 +40,7 @@ enum AppState {
         scroll: u16,
         selected: usize,
         show_password: bool,
+        show_headers: bool,
     },
     ViewVaultDetail {
         account: String,
@@ -49,6 +50,7 @@ enum AppState {
         previous_scroll: u16,
         previous_selected: usize,
         scroll: u16,
+        previous_show_headers: bool,
     },
     SearchVault {
         input_buffer: String,
@@ -217,43 +219,82 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                 }
 
 
-                AppState::ShowAllVaults { entries, scroll, selected, show_password } => {
+                AppState::ShowAllVaults { entries, scroll, selected, show_password, show_headers } => {
                     let mut lines = vec![];
-                    let visible_lines = chunks[1].height.saturating_sub(2) as usize;
+                    let mut last_letter: Option<char> = None;
+                    let mut entry_line_indices = vec![]; // mapovanie: entry index → line index
 
+                    for (i, (acc, user, enc)) in entries.iter().enumerate() {
+                        let first_letter = acc.chars().next().unwrap_or('?').to_ascii_uppercase();
 
-                    for (i, (acc, user, enc)) in entries.iter().enumerate().skip(*scroll as usize).take(visible_lines) {
+                        if *show_headers && Some(first_letter) != last_letter {
+                            lines.push(Line::from(Span::styled(
+                                format!("{}", first_letter),
+                                Style::default()
+                                    .fg(Color::Rgb(255, 60, 60))
+                                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+                            )));
+                            last_letter = Some(first_letter);
+                        }
+
                         let mut line = if user.is_empty() {
-                            acc.clone() // zobraz len prvý stĺpec, bez ' | '
+                            acc.clone()
                         } else {
                             format!("{} | {}", acc, user)
                         };
-                        
-                        if *show_password && i == *selected {
-                            let encrypted_bytes = base64::decode(enc).unwrap_or_default();
-                            let decrypted = decrypt(&encrypted_bytes, key).unwrap_or("ERR".to_string());
-                            line += &format!(" | {}", decrypted);
+
+                        if *show_headers && Some(first_letter) != last_letter {
+                            lines.push(Line::from(Span::styled(
+                                format!("{}", first_letter),
+                                Style::default()
+                                    .fg(Color::Red)
+                                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+                            )));
+                            last_letter = Some(first_letter);
                         }
 
-                        let styled_line = if acc == "Sorry, no results :(" {
-                            Span::styled(line, Style::default().fg(Color::Rgb(255, 60, 60)).add_modifier(Modifier::BOLD))
-                        } else if i == *selected {
+                        let styled_line = if i == *selected {
                             Span::styled(line, Style::default().fg(Color::Rgb(255, 165, 0)).add_modifier(Modifier::BOLD))
                         } else {
                             Span::styled(line, Style::default().fg(Color::White))
                         };
 
-
+                        entry_line_indices.push(lines.len()); // pozícia entry v lines
                         lines.push(Line::from(vec![styled_line]));
                     }
 
-                    let paragraph = Paragraph::new(Text::from(lines))
+                    // Zisti, na ktorom riadku je vybraný záznam
+                    let selected_line = *entry_line_indices.get(*selected).unwrap_or(&0);
+                    let visible_lines = chunks[1].height.saturating_sub(2) as usize;
+
+                    let mut scroll_offset = *scroll as usize;
+
+                    // Ak sme úplne na začiatku, resetuj scroll
+                    if *selected == 0 {
+                        scroll_offset = 0;
+                    } else if selected_line < scroll_offset {
+                        scroll_offset = selected_line;
+                    } else if selected_line >= scroll_offset + visible_lines {
+                        scroll_offset = selected_line + 1 - visible_lines;
+                    }
+
+                    *scroll = scroll_offset as u16;
+
+
+                    // Výpočet rozsahu na zobrazenie
+                    let max_scroll = lines.len().saturating_sub(visible_lines);
+                    let start = scroll_offset.min(max_scroll);
+                    let end = (start + visible_lines).min(lines.len());
+
+                    let paragraph = Paragraph::new(Text::from(lines[start..end].to_vec()))
                         .style(Style::default().fg(Color::LightCyan))
                         .block(Block::default().title("Vaults (Select - Enter, Scroll, Menu - Esc)").borders(Borders::ALL))
                         .wrap(Wrap { trim: false });
 
                     f.render_widget(paragraph, chunks[1]);
+
                 }
+
 
                 AppState::SearchVault { input_buffer } => {
                     let lines = vec![
@@ -317,6 +358,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                         scroll: 0,
                                         selected: 0,
                                         show_password: false,
+                                        show_headers: true,
                                     };
                                 }
                                 3 => { /* vymazať */ }
@@ -328,27 +370,58 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                         }
                     }
 
-                    AppState::ShowAllVaults { scroll, selected, show_password, entries} => {
+                    AppState::ShowAllVaults { scroll, selected, show_password, entries, show_headers} => {
                         match code {
                             KeyCode::Esc => {
                                 *state = AppState::Menu;
                             }
                             KeyCode::Down => {
-                                let size = terminal.size()?; // získaj aktuálnu veľkosť
-                                let visible_lines = size.height.saturating_sub(4) as usize; // -4: okraje + padding
-
                                 if *selected < entries.len().saturating_sub(1) {
                                     *selected += 1;
-                                    if *selected >= *scroll as usize + visible_lines {
-                                        *scroll += 1;
+
+                                    // Prepočítaj pozíciu vybraného záznamu (s hlavičkami písmen)
+                                    let mut line_index = 0;
+                                    let mut last_letter: Option<char> = None;
+
+                                    for (i, (acc, _, _)) in entries.iter().enumerate() {
+                                        let first_letter = acc.chars().next().unwrap_or('?').to_ascii_uppercase();
+                                        if Some(first_letter) != last_letter {
+                                            line_index += 1; // hlavička
+                                            last_letter = Some(first_letter);
+                                        }
+                                        if i == *selected {
+                                            break;
+                                        }
+                                        line_index += 1; // samotný entry
+                                    }
+
+                                    let terminal_height = terminal.size()?.height.saturating_sub(4) as usize;
+                                    if line_index >= *scroll as usize + terminal_height {
+                                        *scroll = (line_index + 1 - terminal_height) as u16;
                                     }
                                 }
                             }
                             KeyCode::Up => {
                                 if *selected > 0 {
                                     *selected -= 1;
-                                    if *selected < *scroll as usize && *scroll > 0 {
-                                        *scroll -= 1;
+
+                                    let mut line_index = 0;
+                                    let mut last_letter: Option<char> = None;
+
+                                    for (i, (acc, _, _)) in entries.iter().enumerate() {
+                                        let first_letter = acc.chars().next().unwrap_or('?').to_ascii_uppercase();
+                                        if Some(first_letter) != last_letter {
+                                            line_index += 1;
+                                            last_letter = Some(first_letter);
+                                        }
+                                        if i == *selected {
+                                            break;
+                                        }
+                                        line_index += 1;
+                                    }
+
+                                    if line_index < *scroll as usize {
+                                        *scroll = line_index as u16;
                                     }
                                 }
                             }
@@ -368,6 +441,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                     previous_scroll: *scroll,
                                     previous_selected: *selected,
                                     scroll: 0,
+                                    previous_show_headers: *show_headers,
                                 };
                             }
                             _ => {}
@@ -379,6 +453,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                         previous_scroll,
                         previous_selected,
                         scroll,
+                        previous_show_headers,
                         ..
                     } => {
                         match code {
@@ -388,6 +463,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                     scroll: *previous_scroll,
                                     selected: *previous_selected,
                                     show_password: false,
+                                    show_headers: *previous_show_headers,
                                 };
                             }
                             KeyCode::Down => {
@@ -440,6 +516,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                     scroll: 0,
                                     selected: 0,
                                     show_password: false,
+                                    show_headers: false,
                                 };
                             }
                             KeyCode::Esc => {

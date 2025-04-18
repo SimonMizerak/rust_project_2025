@@ -49,6 +49,9 @@ enum AppState {
         previous_scroll: u16,
         previous_selected: usize,
         scroll: u16,
+    },
+    SearchVault {
+        input_buffer: String,
     }
 }
 
@@ -65,21 +68,21 @@ fn main() -> Result<(), Box<dyn Error>> {
     let conn = initialize_db("passwords.db")?; // databáza
 
     let mut state = AppState::Menu;
-    let res = run_app(&mut terminal, &key, &conn, &mut state);
 
+    let result = run_app(&mut terminal, &key, &conn, &mut state);
 
-
-    // Čistenie terminálu po skončení
-    disable_raw_mode()?;
+    // Vždy sa pokús o správne čistenie terminálu
+    disable_raw_mode().ok();
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
         DisableMouseCapture
-    )?;
-    terminal.show_cursor()?;
+    ).ok();
+    terminal.show_cursor().ok();
 
-    if let Err(err) = res {
-        println!("Chyba aplikácie: {}", err);
+    // Až potom vypíš chybu ak existuje
+    if let Err(err) = result {
+        eprintln!("Chyba aplikácie: {}", err);
     }
 
     Ok(())
@@ -220,30 +223,50 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
 
 
                     for (i, (acc, user, enc)) in entries.iter().enumerate().skip(*scroll as usize).take(visible_lines) {
-                        let mut line = format!("{} | {}", acc, user);
+                        let mut line = if user.is_empty() {
+                            acc.clone() // zobraz len prvý stĺpec, bez ' | '
+                        } else {
+                            format!("{} | {}", acc, user)
+                        };
+                        
                         if *show_password && i == *selected {
                             let encrypted_bytes = base64::decode(enc).unwrap_or_default();
                             let decrypted = decrypt(&encrypted_bytes, key).unwrap_or("ERR".to_string());
                             line += &format!(" | {}", decrypted);
                         }
 
-                        // Zvýrazni vybraný riadok
-                        let styled_line = if i == *selected {
+                        let styled_line = if acc == "Sorry, no results :(" {
+                            Span::styled(line, Style::default().fg(Color::Rgb(255, 60, 60)).add_modifier(Modifier::BOLD))
+                        } else if i == *selected {
                             Span::styled(line, Style::default().fg(Color::Rgb(255, 165, 0)).add_modifier(Modifier::BOLD))
                         } else {
-                            Span::styled(line,Style::default().fg(Color::White),)
+                            Span::styled(line, Style::default().fg(Color::White))
                         };
+
 
                         lines.push(Line::from(vec![styled_line]));
                     }
 
                     let paragraph = Paragraph::new(Text::from(lines))
                         .style(Style::default().fg(Color::LightCyan))
-                        .block(Block::default().title("All vaults (Select - Enter, Scroll, Menu - Esc)").borders(Borders::ALL))
+                        .block(Block::default().title("Vaults (Select - Enter, Scroll, Menu - Esc)").borders(Borders::ALL))
                         .wrap(Wrap { trim: false });
 
                     f.render_widget(paragraph, chunks[1]);
                 }
+
+                AppState::SearchVault { input_buffer } => {
+                    let lines = vec![
+                        Line::from(Span::styled("Enter website name to filter:", Style::default().fg(Color::Rgb(255, 60, 60)))),
+                        Line::from(Span::styled(input_buffer.as_str(), Style::default().fg(Color::White))),
+                    ];
+                    let paragraph = Paragraph::new(Text::from(lines))
+                        .block(Block::default().title("Search Vault").borders(Borders::ALL))
+                        .style(Style::default().fg(Color::Rgb(0, 255, 255)));
+
+                    f.render_widget(paragraph, chunks[1]);
+                }
+
 
             }
         })?;
@@ -273,12 +296,21 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                         input_buffer: String::new(),
                                     };
                                 }
-                                1 => { /* vyhľadať specifiv */ }
+                                1 => { *state = AppState::SearchVault {
+                                    input_buffer: String::new(),}; }
                                 2 => {
-                                    let vaults = get_passwords(conn)?
+                                    let mut vaults: Vec<(String, String, String)> = get_passwords(conn)?
                                         .into_iter()
                                         .map(|(acc, user, enc)| (acc, user, base64::encode(enc)))
                                         .collect();
+                                    vaults.sort_by(|a, b| {
+                                        let site_cmp = a.0.to_lowercase().cmp(&b.0.to_lowercase());
+                                        if site_cmp == std::cmp::Ordering::Equal {
+                                            a.1.to_lowercase().cmp(&b.1.to_lowercase())
+                                        } else {
+                                            site_cmp
+                                        }
+                                    });
 
                                     *state = AppState::ShowAllVaults {
                                         entries: vaults,
@@ -322,6 +354,10 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                             }
                             KeyCode::Enter => {
                                 let (acc, user, enc) = &entries[*selected];
+                                if acc == "Sorry, no results :(" {
+                                    // nič – nedovoľ vstup
+                                    continue;
+                                }
                                 let decrypted = decrypt(&base64::decode(enc).unwrap_or_default(), key).unwrap_or("ERR".to_string());
 
                                 *state = AppState::ViewVaultDetail {
@@ -373,7 +409,45 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                         }
                     }
 
+                    AppState::SearchVault { input_buffer } => {
+                        match code {
+                            KeyCode::Char(c) => input_buffer.push(c),
+                            KeyCode::Backspace => { input_buffer.pop(); }
+                            KeyCode::Enter => {
+                                let filtered: Vec<_> = get_passwords(conn)?
+                                    .into_iter()
+                                    .filter(|(site, _, _)| site.to_lowercase().contains(&input_buffer.to_lowercase()))
+                                    .map(|(acc, user, enc)| (acc, user, base64::encode(enc)))
+                                    .collect();
 
+                                let mut entries = if filtered.is_empty() {
+                                    vec![("Sorry, no results :(".to_string(), "".to_string(), "".to_string())]
+                                } else {
+                                    filtered
+                                };
+
+                                entries.sort_by(|a, b| {
+                                    let site_cmp = a.0.to_lowercase().cmp(&b.0.to_lowercase());
+                                    if site_cmp == std::cmp::Ordering::Equal {
+                                        a.1.to_lowercase().cmp(&b.1.to_lowercase())
+                                    } else {
+                                        site_cmp
+                                    }
+                                });
+
+                                *state = AppState::ShowAllVaults {
+                                    entries,
+                                    scroll: 0,
+                                    selected: 0,
+                                    show_password: false,
+                                };
+                            }
+                            KeyCode::Esc => {
+                                *state = AppState::Menu;
+                            }
+                            _ => {}
+                        }
+                    }
 
                     AppState::CreateAccount {
                         step,

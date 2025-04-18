@@ -11,18 +11,6 @@ use rusqlite::Connection;
 use ratatui::widgets::Wrap;
 use ratatui::text::Text;
 use ratatui::text::Line;
-
-
-
-fn read_input(prompt: &str) -> String {
-    print!("{}", prompt);
-    io::stdout().flush().unwrap();
-    let mut input = String::new();
-    io::stdin().read_line(&mut input).expect("Nešlo prečítať vstup");
-    input.trim().to_string()
-}
-
-
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind},
     execute,
@@ -45,17 +33,20 @@ enum AppState {
         account: String,
         username: String,
         password: String,
-        input_buffer: String, // <- tu
+        input_buffer: String,
     },
     ShowAllVaults {
-        entries: Vec<(String, String, String)>, // alebo prispôsob podľa tvojej DB
-        scroll: u16, // <--- toto
-        selected: usize,           // <--- pridaj toto
+        entries: Vec<(String, String, String)>,
+        scroll: u16,
+        selected: usize,
         show_password: bool,
     },
-
+    ViewVaultDetail {
+        account: String,
+        username: String,
+        password: String,
+    }
 }
-
 
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -141,6 +132,8 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                 .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
                 .split(f.size());
 
+            let visible_lines = chunks[1].height as usize;
+
             let list = List::new(items)
                 .block(
                     Block::default()
@@ -180,10 +173,38 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                     f.render_widget(paragraph, chunks[1]);
                 }
 
+                AppState::ViewVaultDetail { account, username, password } => {
+                    let labels = vec![
+                        ("Website", account),
+                        ("Email/Username", username),
+                        ("Password", password),
+                    ];
+
+                    let content: Vec<Line> = labels
+                        .iter()
+                        .flat_map(|(label, value)| {
+                            vec![
+                                Line::from(Span::styled(*label, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
+                                Line::from(Span::raw(value.as_str())),
+                                Line::from(""), // prázdny riadok
+                            ]
+                        })
+                        .collect();
+
+                    let paragraph = Paragraph::new(Text::from(content))
+                        .block(Block::default().title("Vault Details (ESC to return)").borders(Borders::ALL))
+                        .wrap(Wrap { trim: false });
+
+                    f.render_widget(paragraph, chunks[1]);
+                }
+
+
                 AppState::ShowAllVaults { entries, scroll, selected, show_password } => {
                     let mut lines = vec![];
+                    let visible_lines = chunks[1].height.saturating_sub(2) as usize;
 
-                    for (i, (acc, user, enc)) in entries.iter().enumerate().skip(*scroll as usize) {
+
+                    for (i, (acc, user, enc)) in entries.iter().enumerate().skip(*scroll as usize).take(visible_lines) {
                         let mut line = format!("{} | {}", acc, user);
                         if *show_password && i == *selected {
                             let encrypted_bytes = base64::decode(enc).unwrap_or_default();
@@ -203,7 +224,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
 
                     let paragraph = Paragraph::new(Text::from(lines))
                         .style(Style::default().fg(Color::LightCyan))
-                        .block(Block::default().title("Vaulty").borders(Borders::ALL))
+                        .block(Block::default().title("All vaults (Enter, Scroll, Esc)").borders(Borders::ALL))
                         .wrap(Wrap { trim: false });
 
                     f.render_widget(paragraph, chunks[1]);
@@ -266,9 +287,12 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                 *state = AppState::Menu;
                             }
                             KeyCode::Down => {
+                                let size = terminal.size()?; // získaj aktuálnu veľkosť
+                                let visible_lines = size.height.saturating_sub(4) as usize; // -4: okraje + padding
+
                                 if *selected < entries.len().saturating_sub(1) {
                                     *selected += 1;
-                                    if *selected as u16 >= *scroll + 10 {
+                                    if *selected >= *scroll as usize + visible_lines {
                                         *scroll += 1;
                                     }
                                 }
@@ -276,25 +300,38 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                             KeyCode::Up => {
                                 if *selected > 0 {
                                     *selected -= 1;
-                                    if *selected as u16 <= *scroll && *scroll > 0 {
+                                    if *selected < *scroll as usize && *scroll > 0 {
                                         *scroll -= 1;
                                     }
                                 }
                             }
                             KeyCode::Enter => {
-                                *show_password = !*show_password; // toggle zobrazovania hesla
+                                let (acc, user, enc) = &entries[*selected];
+                                let decrypted = decrypt(&base64::decode(enc).unwrap_or_default(), key).unwrap_or("ERR".to_string());
+
+                                *state = AppState::ViewVaultDetail {
+                                    account: acc.clone(),
+                                    username: user.clone(),
+                                    password: decrypted,
+                                };
                             }
                             _ => {}
                         }
                     }
 
+                    AppState::ViewVaultDetail { .. } => {
+                        if let KeyCode::Esc = code {
+                            let vaults = get_passwords(conn)?
+                                .into_iter()
+                                .map(|(acc, user, enc)| (acc, user, base64::encode(enc)))
+                                .collect();
 
-                    AppState::ShowAllVaults { .. } => {
-                        match code {
-                            KeyCode::Esc => {
-                                *state = AppState::Menu;
-                            }
-                            _ => {}
+                            *state = AppState::ShowAllVaults {
+                                entries: vaults,
+                                scroll: 0,
+                                selected: 0,
+                                show_password: false,
+                            };
                         }
                     }
 

@@ -45,6 +45,10 @@ enum AppState {
         account: String,
         username: String,
         password: String,
+        previous_entries: Vec<(String, String, String)>,
+        previous_scroll: u16,
+        previous_selected: usize,
+        scroll: u16,
     }
 }
 
@@ -53,7 +57,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Terminál setup
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -167,13 +171,19 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                         _ => "Finito!",
                     };
 
-                    let paragraph = Paragraph::new(format!("{}\n{}", label, input_buffer))
-                        .style(Style::default().fg(Color::Rgb(0, 255, 255)))
-                        .block(Block::default().title("Adding Vault manually").borders(Borders::ALL));
+                    let lines = vec![
+                        Line::from(Span::styled(label, Style::default().fg(Color::Rgb(255, 60, 60)))),
+                        Line::from(Span::styled(input_buffer.as_str(), Style::default().fg(Color::White))),
+                    ];
+
+                    let paragraph = Paragraph::new(Text::from(lines))
+                        .block(Block::default().title("Adding Vault manually").borders(Borders::ALL))
+                        .style(Style::default().fg(Color::Rgb(0, 255, 255)));
+                    
                     f.render_widget(paragraph, chunks[1]);
                 }
 
-                AppState::ViewVaultDetail { account, username, password } => {
+                AppState::ViewVaultDetail { account, username, password, scroll, ..} => {
                     let labels = vec![
                         ("Website", account),
                         ("Email/Username", username),
@@ -184,18 +194,23 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                         .iter()
                         .flat_map(|(label, value)| {
                             vec![
-                                Line::from(Span::styled(*label, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
-                                Line::from(Span::raw(value.as_str())),
-                                Line::from(""), // prázdny riadok
+                                Line::from(Span::styled(*label, Style::default().fg(Color::Rgb(255, 60, 60)).add_modifier(Modifier::BOLD))),
+                                Line::from(Span::styled(value.as_str(),Style::default().fg(Color::White),)),
+                                Line::from(""),
                             ]
                         })
                         .collect();
 
+                    let visible_lines = chunks[1].height.saturating_sub(2) as usize;
+                    let max_scroll = content.len().saturating_sub(visible_lines);
+                    let actual_scroll = (*scroll as usize).min(max_scroll) as u16;
+                    
                     let paragraph = Paragraph::new(Text::from(content))
-                        .block(Block::default().title("Vault Details (ESC to return)").borders(Borders::ALL))
+                        .block(Block::default().title("Vault details (Go back - Esc)").borders(Borders::ALL))
+                        .style(Style::default().fg(Color::Rgb(0, 255, 255)))
                         .wrap(Wrap { trim: false });
 
-                    f.render_widget(paragraph, chunks[1]);
+                    f.render_widget(paragraph.scroll((*scroll, 0)), chunks[1]);
                 }
 
 
@@ -214,9 +229,9 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
 
                         // Zvýrazni vybraný riadok
                         let styled_line = if i == *selected {
-                            Span::styled(line, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+                            Span::styled(line, Style::default().fg(Color::Rgb(255, 165, 0)).add_modifier(Modifier::BOLD))
                         } else {
-                            Span::raw(line)
+                            Span::styled(line,Style::default().fg(Color::White),)
                         };
 
                         lines.push(Line::from(vec![styled_line]));
@@ -224,7 +239,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
 
                     let paragraph = Paragraph::new(Text::from(lines))
                         .style(Style::default().fg(Color::LightCyan))
-                        .block(Block::default().title("All vaults (Enter, Scroll, Esc)").borders(Borders::ALL))
+                        .block(Block::default().title("All vaults (Select - Enter, Scroll, Menu - Esc)").borders(Borders::ALL))
                         .wrap(Wrap { trim: false });
 
                     f.render_widget(paragraph, chunks[1]);
@@ -281,7 +296,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                         }
                     }
 
-                    AppState::ShowAllVaults { scroll, selected, show_password, entries } => {
+                    AppState::ShowAllVaults { scroll, selected, show_password, entries} => {
                         match code {
                             KeyCode::Esc => {
                                 *state = AppState::Menu;
@@ -313,27 +328,51 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                     account: acc.clone(),
                                     username: user.clone(),
                                     password: decrypted,
+                                    previous_entries: entries.clone(),
+                                    previous_scroll: *scroll,
+                                    previous_selected: *selected,
+                                    scroll: 0,
                                 };
                             }
                             _ => {}
                         }
                     }
 
-                    AppState::ViewVaultDetail { .. } => {
-                        if let KeyCode::Esc = code {
-                            let vaults = get_passwords(conn)?
-                                .into_iter()
-                                .map(|(acc, user, enc)| (acc, user, base64::encode(enc)))
-                                .collect();
+                    AppState::ViewVaultDetail {
+                        previous_entries,
+                        previous_scroll,
+                        previous_selected,
+                        scroll,
+                        ..
+                    } => {
+                        match code {
+                            KeyCode::Esc => {
+                                *state = AppState::ShowAllVaults {
+                                    entries: previous_entries.clone(),
+                                    scroll: *previous_scroll,
+                                    selected: *previous_selected,
+                                    show_password: false,
+                                };
+                            }
+                            KeyCode::Down => {
+                                let content_lines: u16 = 3 * 3; // 3 labely * 3 riadky (label, hodnota, prázdny)
+                                let visible_lines = terminal.size()?.height.saturating_sub(4);
 
-                            *state = AppState::ShowAllVaults {
-                                entries: vaults,
-                                scroll: 0,
-                                selected: 0,
-                                show_password: false,
-                            };
+                                let max_scroll = content_lines.saturating_sub(visible_lines);
+
+                                if *scroll < max_scroll {
+                                    *scroll += 1;
+                                }
+                            }
+                            KeyCode::Up => {
+                                if *scroll > 0 {
+                                    *scroll -= 1;
+                                }
+                            }
+                            _ => {}
                         }
                     }
+
 
 
                     AppState::CreateAccount {

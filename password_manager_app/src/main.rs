@@ -25,6 +25,7 @@ use ratatui::{
     Terminal,
 };
 use std::error::Error;
+use arboard::Clipboard;
 
 enum AppState {
     Menu,
@@ -51,6 +52,11 @@ enum AppState {
         previous_selected: usize,
         scroll: u16,
         previous_show_headers: bool,
+
+        email_emoji_pos: Option<(u16, u16)>,
+        pass_emoji_pos: Option<(u16, u16)>,
+
+        copy_message: Option<(String, std::time::Instant)>,
     },
     EditVault {
         step: usize,
@@ -84,7 +90,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Terminál setup
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    
+
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
@@ -207,19 +213,55 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                     f.render_widget(paragraph, chunks[1]);
                 }
 
-                AppState::ViewVaultDetail { account, username, password, scroll, ..} => {
+                AppState::ViewVaultDetail { account, username, password, scroll, copy_message, ..} => {
                     let labels = vec![
                         ("Website", account),
                         ("Email/Username", username),
                         ("Password", password),
                     ];
 
+                    //let mut email_pos = None;
+                    //let mut pass_pos = None;
+                    let mut current_line = 0;
+
                     let content: Vec<Line> = labels
                         .iter()
-                        .flat_map(|(label, value)| {
+                        .enumerate()
+                        .flat_map(|(i, (label, value))| {
+                            let mut label_line = vec![Span::styled(
+                                *label,
+                                Style::default().fg(Color::Rgb(255, 60, 60)).add_modifier(Modifier::BOLD),
+                            )];
+
+                            if i == 1 || i == 2 {
+                                label_line.push(Span::raw(" "));
+
+                                let copied_now = copy_message.as_ref()
+                                    .map(|(msg, time)| {
+                                        time.elapsed().as_secs_f32() < 2.0 &&
+                                            ((i == 1 && msg.contains("Email")) || (i == 2 && msg.contains("Password")))
+                                    })
+                                    .unwrap_or(false);
+
+                                let text = if copied_now {
+                                    "📋 (Copied Successfully!)"
+                                } else if i == 1 {
+                                    "📋 (U - copy to clipboard)"
+                                } else {
+                                    "📋 (P - copy to clipboard)"
+                                };
+
+                                label_line.push(Span::styled(
+                                    text,
+                                    Style::default().fg(if copied_now { Color::Rgb(0, 225, 0) } else { Color::White }),
+                                ));
+                            }
+                            
+                            current_line += 3;
+
                             vec![
-                                Line::from(Span::styled(*label, Style::default().fg(Color::Rgb(255, 60, 60)).add_modifier(Modifier::BOLD))),
-                                Line::from(Span::styled(value.as_str(),Style::default().fg(Color::White),)),
+                                Line::from(label_line),
+                                Line::from(Span::styled(value.as_str(), Style::default().fg(Color::White))),
                                 Line::from(""),
                             ]
                         })
@@ -290,7 +332,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                         };
 
 
-                        entry_line_indices.push(lines.len()); // pozícia entry v lines
+                        entry_line_indices.push(lines.len());
                         lines.push(Line::from(vec![styled_line]));
                     }
 
@@ -351,7 +393,6 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                     };
 
                     let display_value = input_buffer;
-                    //display_value.push(' ');
 
                     let mut lines = vec![
                         Line::from(Span::styled(
@@ -369,7 +410,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                     let cursor_char = display_value
                         .chars()
                         .nth(cursor_pos)
-                        .unwrap_or(' '); // znak pod kurzorom alebo medzera
+                        .unwrap_or(' ');
 
                     let after = if cursor_pos < display_value.len() {
                         &display_value[cursor_pos + cursor_char.len_utf8()..]
@@ -492,7 +533,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                         if i == *selected {
                                             break;
                                         }
-                                        line_index += 1; // samotný entry
+                                        line_index += 1;
                                     }
 
                                     let terminal_height = terminal.size()?.height.saturating_sub(4) as usize;
@@ -528,7 +569,6 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                             KeyCode::Enter => {
                                 let (acc, user, enc) = &entries[*selected];
                                 if acc == "Sorry, no results :(" || acc == "No vaults created yet." {
-                                    // nič – nedovoľ vstup
                                     continue;
                                 }
                                 let decrypted = decrypt(&base64::decode(enc).unwrap_or_default(), key).unwrap_or("ERR".to_string());
@@ -542,6 +582,9 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                     previous_selected: *selected,
                                     scroll: 0,
                                     previous_show_headers: *show_headers,
+                                    email_emoji_pos: None,
+                                    pass_emoji_pos: None,
+                                    copy_message: None,
                                 };
                             }
                             _ => {}
@@ -570,7 +613,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                 };
                             }
                             KeyCode::Down => {
-                                let content_lines: u16 = 3 * 3; // 3 labely * 3 riadky (label, hodnota, prázdny)
+                                let content_lines: u16 = 3 * 3;
                                 let visible_lines = terminal.size()?.height.saturating_sub(4);
 
                                 let max_scroll = content_lines.saturating_sub(visible_lines);
@@ -615,6 +658,44 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                     previous_show_headers: *previous_show_headers,
                                     started_editing: false,
                                     cursor_pos: account.len(),
+                                };
+                            }
+                            KeyCode::Char('u') => {
+                                if let Ok(mut cb) = Clipboard::new() {
+                                    cb.set_text(username.clone()).ok();
+                                }
+
+                                *state = AppState::ViewVaultDetail {
+                                    account: account.clone(),
+                                    username: username.clone(),
+                                    password: password.clone(),
+                                    previous_entries: previous_entries.clone(),
+                                    previous_scroll: *previous_scroll,
+                                    previous_selected: *previous_selected,
+                                    scroll: *scroll,
+                                    previous_show_headers: *previous_show_headers,
+                                    email_emoji_pos: None,
+                                    pass_emoji_pos: None,
+                                    copy_message: Some(("Email/Username copied!".to_string(), std::time::Instant::now())),
+                                };
+                            }
+                            KeyCode::Char('p') => {
+                                if let Ok(mut cb) = Clipboard::new() {
+                                    cb.set_text(password.clone()).ok();
+                                }
+
+                                *state = AppState::ViewVaultDetail {
+                                    account: account.clone(),
+                                    username: username.clone(),
+                                    password: password.clone(),
+                                    previous_entries: previous_entries.clone(),
+                                    previous_scroll: *previous_scroll,
+                                    previous_selected: *previous_selected,
+                                    scroll: *scroll,
+                                    previous_show_headers: *previous_show_headers,
+                                    email_emoji_pos: None,
+                                    pass_emoji_pos: None,
+                                    copy_message: Some(("Password copied!".to_string(), std::time::Instant::now())),
                                 };
                             }
                             _ => {}
@@ -751,20 +832,19 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                     0 => {
                                         *temp_account = input_buffer.clone();
                                         *step = 1;
-                                        *input_buffer = username.clone(); // predvyplň pre ďalší krok
+                                        *input_buffer = username.clone();
                                         *cursor_pos = input_buffer.len();
                                     }
                                     1 => {
                                         *temp_username = input_buffer.clone();
                                         *step = 2;
-                                        *input_buffer = password.clone(); // predvyplň pre ďalší krok
+                                        *input_buffer = password.clone();
                                         *cursor_pos = input_buffer.len();
                                     }
                                     2 => {
                                         *cursor_pos = input_buffer.len();
                                         *temp_password = input_buffer.clone();
 
-                                        // presuň finálne hodnoty do hlavných premenných
                                         *account = temp_account.clone();
                                         *username = temp_username.clone();
                                         *password = temp_password.clone();
@@ -801,6 +881,9 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                             previous_selected: selected_index,
                                             scroll: 0,
                                             previous_show_headers: true,
+                                            email_emoji_pos: None,
+                                            pass_emoji_pos: None,
+                                            copy_message: None,
                                         };
                                     }
                                     _ => {}
@@ -816,6 +899,9 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                     previous_selected: *previous_selected,
                                     scroll: 0,
                                     previous_show_headers: *previous_show_headers,
+                                    email_emoji_pos: None,
+                                    pass_emoji_pos: None,
+                                    copy_message: None,
                                 };
                             }
                             _ => {}

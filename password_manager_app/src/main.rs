@@ -71,6 +71,8 @@ enum AppState {
         previous_show_headers: bool,
 
         started_editing: bool,
+
+        cursor_pos: usize,
     },
     SearchVault {
         input_buffer: String,
@@ -82,6 +84,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Terminál setup
     enable_raw_mode()?;
     let mut stdout = io::stdout();
+    
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
@@ -332,7 +335,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                     f.render_widget(paragraph, chunks[1]);
                 }
 
-                AppState::EditVault { step, input_buffer, account, username, password, ..} => {
+                AppState::EditVault { step, input_buffer, account, username, password, cursor_pos, ..} => {
                     let label = match step {
                         0 => "Edit Website (account):",
                         1 => "Edit Email/Username:",
@@ -348,17 +351,54 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                     };
 
                     let display_value = input_buffer;
+                    //display_value.push(' ');
 
-                    let lines = vec![
-                        Line::from(Span::styled(label, Style::default().fg(Color::Rgb(255, 60, 60)).add_modifier(Modifier::BOLD))),
-                        Line::from(Span::styled(display_value.as_str(), Style::default().fg(Color::White))),
+                    let mut lines = vec![
+                        Line::from(Span::styled(
+                            label,
+                            Style::default()
+                                .fg(Color::Rgb(255, 60, 60))
+                                .add_modifier(Modifier::BOLD),
+                        )),
                     ];
-                    
+
+                    let cursor_pos = std::cmp::min(*cursor_pos, display_value.len());
+
+                    let mut spans = vec![];
+                    let before = &display_value[..cursor_pos];
+                    let cursor_char = display_value
+                        .chars()
+                        .nth(cursor_pos)
+                        .unwrap_or(' '); // znak pod kurzorom alebo medzera
+
+                    let after = if cursor_pos < display_value.len() {
+                        &display_value[cursor_pos + cursor_char.len_utf8()..]
+                    } else {
+                        ""
+                    };
+
+                    spans.push(Span::styled(before, Style::default().fg(Color::White)));
+                    spans.push(Span::styled(
+                        cursor_char.to_string(),
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::Rgb(0, 255, 255)) // <-- tvoja cyan farba
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                    spans.push(Span::styled(after, Style::default().fg(Color::White)));
+
+                    lines.push(Line::from(spans));
+
+
                     let paragraph = Paragraph::new(Text::from(lines))
                         .block(Block::default().title("Edit Vault (Next - Enter, Cancel - Esc)").borders(Borders::ALL))
                         .style(Style::default().fg(Color::Rgb(0, 255, 255)));
 
                     f.render_widget(paragraph, chunks[1]);
+
+                    let cursor_x = chunks[1].x + 1 + cursor_pos as u16;
+                    let cursor_y = chunks[1].y + 2;
+                    //f.set_cursor(cursor_x, cursor_y);
                 }
             }
         })?;
@@ -574,6 +614,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                     previous_selected: *previous_selected,
                                     previous_show_headers: *previous_show_headers,
                                     started_editing: false,
+                                    cursor_pos: account.len(),
                                 };
                             }
                             _ => {}
@@ -680,23 +721,47 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                         previous_selected,
                         previous_show_headers,
                         started_editing,
+                        cursor_pos,
                     } => {
                         match code {
-                            KeyCode::Char(c) => input_buffer.push(c),
-                            KeyCode::Backspace => { input_buffer.pop(); }
+                            KeyCode::Char(c) => {
+                                if *cursor_pos <= input_buffer.len() {
+                                    input_buffer.insert(*cursor_pos, c);
+                                    *cursor_pos += 1;
+                                }
+                            }
+                            KeyCode::Backspace => {
+                                if *cursor_pos > 0 && *cursor_pos <= input_buffer.len() {
+                                    input_buffer.remove(*cursor_pos - 1);
+                                    *cursor_pos -= 1;
+                                }
+                            }
+                            KeyCode::Left => {
+                                if *cursor_pos > 0 {
+                                    *cursor_pos -= 1;
+                                }
+                            }
+                            KeyCode::Right => {
+                                if *cursor_pos < input_buffer.len() {
+                                    *cursor_pos += 1;
+                                }
+                            }
                             KeyCode::Enter => {
                                 match *step {
                                     0 => {
                                         *temp_account = input_buffer.clone();
                                         *step = 1;
                                         *input_buffer = username.clone(); // predvyplň pre ďalší krok
+                                        *cursor_pos = input_buffer.len();
                                     }
                                     1 => {
                                         *temp_username = input_buffer.clone();
                                         *step = 2;
                                         *input_buffer = password.clone(); // predvyplň pre ďalší krok
+                                        *cursor_pos = input_buffer.len();
                                     }
                                     2 => {
+                                        *cursor_pos = input_buffer.len();
                                         *temp_password = input_buffer.clone();
 
                                         // presuň finálne hodnoty do hlavných premenných

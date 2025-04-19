@@ -686,6 +686,7 @@ dependencies = [
  "base64",
  "crossterm",
  "password_manager_lib",
+ "rand",
  "ratatui",
  "rusqlite",
 ]

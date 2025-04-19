@@ -85,6 +85,15 @@ enum AppState {
     }
 }
 
+fn generate_strong_password(len: usize) -> String {
+    use rand::{distributions::Alphanumeric, thread_rng, Rng};
+    thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(len)
+        .map(char::from)
+        .collect()
+}
+
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Terminál setup
@@ -96,7 +105,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut terminal = Terminal::new(backend)?;
 
     let key = [42u8; 32]; // šifrovací kľúč
-    let conn = initialize_db("passwords.db")?; // databáza
+    let conn = initialize_db("passwords.db")?;
 
     let mut state = AppState::Menu;
 
@@ -197,7 +206,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                     let label = match step {
                         0 => "Enter website name:",
                         1 => "Enter email/username:",
-                        2 => "Enter password:",
+                        2 => "Enter password: (# - generate safe password)",
                         _ => "Finito!",
                     };
 
@@ -207,7 +216,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                     ];
 
                     let paragraph = Paragraph::new(Text::from(lines))
-                        .block(Block::default().title("Adding Vault manually").borders(Borders::ALL))
+                        .block(Block::default().title("Adding Vault manually (Cancel/Menu - Esc)").borders(Borders::ALL))
                         .style(Style::default().fg(Color::Rgb(0, 255, 255)));
 
                     f.render_widget(paragraph, chunks[1]);
@@ -256,7 +265,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                     Style::default().fg(if copied_now { Color::Rgb(0, 225, 0) } else { Color::White }),
                                 ));
                             }
-                            
+
                             current_line += 3;
 
                             vec![
@@ -363,8 +372,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                     f.render_widget(paragraph, chunks[1]);
 
                 }
-
-
+                
                 AppState::SearchVault { input_buffer } => {
                     let lines = vec![
                         Line::from(Span::styled("Enter website name to filter:", Style::default().fg(Color::Rgb(255, 60, 60)).add_modifier(Modifier::BOLD))),
@@ -381,7 +389,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                     let label = match step {
                         0 => "Edit Website (account):",
                         1 => "Edit Email/Username:",
-                        2 => "Edit Password:",
+                        2 => "Edit Password: (# - generate safe password)",
                         _ => "Updating...",
                     };
 
@@ -423,7 +431,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                         cursor_char.to_string(),
                         Style::default()
                             .fg(Color::Black)
-                            .bg(Color::Rgb(0, 255, 255)) // <-- tvoja cyan farba
+                            .bg(Color::Rgb(0, 255, 255))
                             .add_modifier(Modifier::BOLD),
                     ));
                     spans.push(Span::styled(after, Style::default().fg(Color::White)));
@@ -755,6 +763,11 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                         password
                     } => {
                         match code {
+                            KeyCode::Char(c) if *step == 2 && (c == '#') => {
+                                let generated = generate_strong_password(16);
+                                *password = generated.clone();
+                                *input_buffer = generated;
+                            }
                             KeyCode::Char(c) => input_buffer.push(c),
                             KeyCode::Backspace => { input_buffer.pop(); }
                             KeyCode::Enter => {
@@ -805,6 +818,11 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                         cursor_pos,
                     } => {
                         match code {
+                            KeyCode::Char('#') if *step == 2 => {
+                                let generated = generate_strong_password(16);
+                                *input_buffer = generated.clone();
+                                *cursor_pos = generated.len();
+                            }
                             KeyCode::Char(c) => {
                                 if *cursor_pos <= input_buffer.len() {
                                     input_buffer.insert(*cursor_pos, c);

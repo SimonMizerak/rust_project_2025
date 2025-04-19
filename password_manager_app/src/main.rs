@@ -52,6 +52,24 @@ enum AppState {
         scroll: u16,
         previous_show_headers: bool,
     },
+    EditVault {
+        step: usize,
+        account: String,
+        username: String,
+        password: String,
+        input_buffer: String,
+        old_account: String,
+        old_username: String,
+        
+        temp_account: String,
+        temp_username: String,
+        temp_password: String,
+
+        previous_entries: Vec<(String, String, String)>,
+        previous_scroll: u16,
+        previous_selected: usize,
+        previous_show_headers: bool,
+    },
     SearchVault {
         input_buffer: String,
     }
@@ -73,7 +91,6 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let result = run_app(&mut terminal, &key, &conn, &mut state);
 
-    // Vždy sa pokús o správne čistenie terminálu
     disable_raw_mode().ok();
     execute!(
         terminal.backend_mut(),
@@ -82,7 +99,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     ).ok();
     terminal.show_cursor().ok();
 
-    // Až potom vypíš chybu ak existuje
     if let Err(err) = result {
         eprintln!("Chyba aplikácie: {}", err);
     }
@@ -112,15 +128,13 @@ impl MenuState {
     }
 }
 
-const MENU_ITEMS: [&str; 5] = ["Create vault", "Search specific vault", "Show all vaults", "Delete vault", "End"];
+const MENU_ITEMS: [&str; 4] = ["Create vault", "Search specific vault", "Show all vaults", "End"];
 
 
 fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8; 32], conn: &Connection, state: &mut AppState,) -> Result<(), Box<dyn std::error::Error>> {
     let mut list_state = ListState::default();
-    list_state.select(Some(0)); // výber prvej položky (index 0)
-
-
-
+    list_state.select(Some(0));
+    
     loop {
         terminal.draw(|f| {
             let size = f.size();
@@ -177,14 +191,14 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                     };
 
                     let lines = vec![
-                        Line::from(Span::styled(label, Style::default().fg(Color::Rgb(255, 60, 60)))),
+                        Line::from(Span::styled(label, Style::default().fg(Color::Rgb(255, 60, 60)).add_modifier(Modifier::BOLD))),
                         Line::from(Span::styled(input_buffer.as_str(), Style::default().fg(Color::White))),
                     ];
 
                     let paragraph = Paragraph::new(Text::from(lines))
                         .block(Block::default().title("Adding Vault manually").borders(Borders::ALL))
                         .style(Style::default().fg(Color::Rgb(0, 255, 255)));
-                    
+
                     f.render_widget(paragraph, chunks[1]);
                 }
 
@@ -209,9 +223,9 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                     let visible_lines = chunks[1].height.saturating_sub(2) as usize;
                     let max_scroll = content.len().saturating_sub(visible_lines);
                     let actual_scroll = (*scroll as usize).min(max_scroll) as u16;
-                    
+
                     let paragraph = Paragraph::new(Text::from(content))
-                        .block(Block::default().title("Vault details (Go back - Esc)").borders(Borders::ALL))
+                        .block(Block::default().title("Vault details (E - Edit, Delete - D, Go back - Esc)").borders(Borders::ALL))
                         .style(Style::default().fg(Color::Rgb(0, 255, 255)))
                         .wrap(Wrap { trim: false });
 
@@ -222,9 +236,18 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                 AppState::ShowAllVaults { entries, scroll, selected, show_password, show_headers } => {
                     let mut lines = vec![];
                     let mut last_letter: Option<char> = None;
-                    let mut entry_line_indices = vec![]; // mapovanie: entry index → line index
+                    let mut entry_line_indices = vec![];
 
                     for (i, (acc, user, enc)) in entries.iter().enumerate() {
+                        if acc == "No vaults created yet." {
+                            let msg = Span::styled(
+                                "No vaults created yet.",
+                                Style::default().fg(Color::Rgb(255, 60, 60)).add_modifier(Modifier::BOLD),
+                            );
+                            lines.push(Line::from(vec![msg]));
+                            continue;
+                        }
+
                         let first_letter = acc.chars().next().unwrap_or('?').to_ascii_uppercase();
 
                         if *show_headers && Some(first_letter) != last_letter {
@@ -247,29 +270,30 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                             lines.push(Line::from(Span::styled(
                                 format!("{}", first_letter),
                                 Style::default()
-                                    .fg(Color::Red)
+                                    .fg(Color::Rgb(255, 60, 60))
                                     .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
                             )));
                             last_letter = Some(first_letter);
                         }
 
-                        let styled_line = if i == *selected {
+                        let styled_line = if acc == "Sorry, no results :(" {
+                            Span::styled(line, Style::default().fg(Color::Rgb(255, 60, 60)).add_modifier(Modifier::BOLD))
+                        } else if i == *selected {
                             Span::styled(line, Style::default().fg(Color::Rgb(255, 165, 0)).add_modifier(Modifier::BOLD))
                         } else {
                             Span::styled(line, Style::default().fg(Color::White))
                         };
 
+
                         entry_line_indices.push(lines.len()); // pozícia entry v lines
                         lines.push(Line::from(vec![styled_line]));
                     }
 
-                    // Zisti, na ktorom riadku je vybraný záznam
                     let selected_line = *entry_line_indices.get(*selected).unwrap_or(&0);
                     let visible_lines = chunks[1].height.saturating_sub(2) as usize;
 
                     let mut scroll_offset = *scroll as usize;
 
-                    // Ak sme úplne na začiatku, resetuj scroll
                     if *selected == 0 {
                         scroll_offset = 0;
                     } else if selected_line < scroll_offset {
@@ -280,8 +304,6 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
 
                     *scroll = scroll_offset as u16;
 
-
-                    // Výpočet rozsahu na zobrazenie
                     let max_scroll = lines.len().saturating_sub(visible_lines);
                     let start = scroll_offset.min(max_scroll);
                     let end = (start + visible_lines).min(lines.len());
@@ -298,7 +320,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
 
                 AppState::SearchVault { input_buffer } => {
                     let lines = vec![
-                        Line::from(Span::styled("Enter website name to filter:", Style::default().fg(Color::Rgb(255, 60, 60)))),
+                        Line::from(Span::styled("Enter website name to filter:", Style::default().fg(Color::Rgb(255, 60, 60)).add_modifier(Modifier::BOLD))),
                         Line::from(Span::styled(input_buffer.as_str(), Style::default().fg(Color::White))),
                     ];
                     let paragraph = Paragraph::new(Text::from(lines))
@@ -308,7 +330,38 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                     f.render_widget(paragraph, chunks[1]);
                 }
 
+                AppState::EditVault { step, input_buffer, account, username, password, ..} => {
+                    let label = match step {
+                        0 => "Edit Website (account):",
+                        1 => "Edit Email/Username:",
+                        2 => "Edit Password:",
+                        _ => "Updating...",
+                    };
 
+                    let current_value = match step {
+                        0 => account,
+                        1 => username,
+                        2 => password,
+                        _ => "",
+                    };
+
+                    let display_value = if input_buffer.is_empty() {
+                        current_value
+                    } else {
+                        input_buffer
+                    };
+
+                    let lines = vec![
+                        Line::from(Span::styled(label, Style::default().fg(Color::Rgb(255, 60, 60)).add_modifier(Modifier::BOLD))),
+                        Line::from(Span::styled(display_value, Style::default().fg(Color::White))),
+                    ];
+                    
+                    let paragraph = Paragraph::new(Text::from(lines))
+                        .block(Block::default().title("Edit Vault (Next - Enter, Cancel - Esc)").borders(Borders::ALL))
+                        .style(Style::default().fg(Color::Rgb(0, 255, 255)));
+
+                    f.render_widget(paragraph, chunks[1]);
+                }
             }
         })?;
 
@@ -344,6 +397,17 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                         .into_iter()
                                         .map(|(acc, user, enc)| (acc, user, base64::encode(enc)))
                                         .collect();
+
+                                    let show_headers = !vaults.is_empty();
+
+                                    if vaults.is_empty() {
+                                        vaults.push((
+                                            "No vaults created yet.".to_string(),
+                                            "".to_string(),
+                                            "".to_string()
+                                        ));
+                                    }
+
                                     vaults.sort_by(|a, b| {
                                         let site_cmp = a.0.to_lowercase().cmp(&b.0.to_lowercase());
                                         if site_cmp == std::cmp::Ordering::Equal {
@@ -358,11 +422,10 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                         scroll: 0,
                                         selected: 0,
                                         show_password: false,
-                                        show_headers: true,
+                                        show_headers,
                                     };
                                 }
-                                3 => { /* vymazať */ }
-                                4 => return Ok(()),
+                                3 => return Ok(()),
                                 _ => {}
                             },
                             KeyCode::Char('q') => return Ok(()),
@@ -379,7 +442,6 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                 if *selected < entries.len().saturating_sub(1) {
                                     *selected += 1;
 
-                                    // Prepočítaj pozíciu vybraného záznamu (s hlavičkami písmen)
                                     let mut line_index = 0;
                                     let mut last_letter: Option<char> = None;
 
@@ -427,7 +489,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                             }
                             KeyCode::Enter => {
                                 let (acc, user, enc) = &entries[*selected];
-                                if acc == "Sorry, no results :(" {
+                                if acc == "Sorry, no results :(" || acc == "No vaults created yet." {
                                     // nič – nedovoľ vstup
                                     continue;
                                 }
@@ -449,6 +511,9 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                     }
 
                     AppState::ViewVaultDetail {
+                        account,
+                        username,
+                        password,
                         previous_entries,
                         previous_scroll,
                         previous_selected,
@@ -481,6 +546,37 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                     *scroll -= 1;
                                 }
                             }
+                            KeyCode::Char('d') => {
+                                delete_vault(conn, account, username)?;
+                                let mut new_entries = previous_entries.clone();
+                                new_entries.retain(|(a, u, _)| a != account || u != username);
+
+                                *state = AppState::ShowAllVaults {
+                                    entries: new_entries,
+                                    scroll: *previous_scroll,
+                                    selected: 0,
+                                    show_password: false,
+                                    show_headers: *previous_show_headers,
+                                };
+                            }
+                            KeyCode::Char('e') => {
+                                *state = AppState::EditVault {
+                                    step: 0,
+                                    account: account.clone(),
+                                    username: username.clone(),
+                                    password: password.clone(),
+                                    input_buffer: account.clone(),
+                                    old_account: account.clone(),
+                                    old_username: username.clone(),
+                                    temp_account: account.clone(),
+                                    temp_username: username.clone(),
+                                    temp_password: password.clone(),
+                                    previous_entries: previous_entries.clone(),
+                                    previous_scroll: *previous_scroll,
+                                    previous_selected: *previous_selected,
+                                    previous_show_headers: *previous_show_headers,
+                                };
+                            }
                             _ => {}
                         }
                     }
@@ -490,6 +586,10 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                             KeyCode::Char(c) => input_buffer.push(c),
                             KeyCode::Backspace => { input_buffer.pop(); }
                             KeyCode::Enter => {
+                                if input_buffer.trim().is_empty() {
+                                    continue;
+                                }
+                                
                                 let filtered: Vec<_> = get_passwords(conn)?
                                     .into_iter()
                                     .filter(|(site, _, _)| site.to_lowercase().contains(&input_buffer.to_lowercase()))
@@ -564,6 +664,94 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                             _ => {}
                         }
                     }
+
+                    AppState::EditVault {
+                        step,
+                        account,
+                        username,
+                        password,
+                        input_buffer,
+                        old_account,
+                        old_username,
+                        temp_account,
+                        temp_username,
+                        temp_password,
+                        previous_entries,
+                        previous_scroll,
+                        previous_selected,
+                        previous_show_headers,
+                    } => {
+                        match code {
+                            KeyCode::Char(c) => input_buffer.push(c),
+                            KeyCode::Backspace => { input_buffer.pop(); }
+                            KeyCode::Enter => {
+                                match *step {
+                                    0 => {
+                                        *temp_account = input_buffer.clone();
+                                        *step = 1;
+                                        *input_buffer = username.clone(); // predvyplň pre ďalší krok
+                                    }
+                                    1 => {
+                                        *temp_username = input_buffer.clone();
+                                        *step = 2;
+                                        *input_buffer = password.clone(); // predvyplň pre ďalší krok
+                                    }
+                                    2 => {
+                                        *temp_password = input_buffer.clone();
+
+                                        // presuň finálne hodnoty do hlavných premenných
+                                        *account = temp_account.clone();
+                                        *username = temp_username.clone();
+                                        *password = temp_password.clone();
+
+                                        let encrypted = encrypt(password, key);
+                                        update_vault(conn, old_account, old_username, account, username, encrypted.as_slice())?;
+
+                                        // znovu načítaj a zorad vaulty
+                                        let mut updated_entries: Vec<(String, String, String)> = get_passwords(conn)?
+                                            .into_iter()
+                                            .map(|(a, u, e)| (a, u, base64::encode(e)))
+                                            .collect();
+
+                                        updated_entries.sort_by(|a, b| {
+                                            let site_cmp = a.0.to_lowercase().cmp(&b.0.to_lowercase());
+                                            if site_cmp == std::cmp::Ordering::Equal {
+                                                a.1.to_lowercase().cmp(&b.1.to_lowercase())
+                                            } else {
+                                                site_cmp
+                                            }
+                                        });
+
+                                        *state = AppState::ViewVaultDetail {
+                                            account: account.clone(),
+                                            username: username.clone(),
+                                            password: password.clone(),
+                                            previous_entries: updated_entries,
+                                            previous_scroll: 0,
+                                            previous_selected: 0,
+                                            scroll: 0,
+                                            previous_show_headers: true,
+                                        };
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            KeyCode::Esc => {
+                                *state = AppState::ViewVaultDetail {
+                                    account: old_account.clone(),
+                                    username: old_username.clone(),
+                                    password: password.clone(),
+                                    previous_entries: previous_entries.clone(),
+                                    previous_scroll: *previous_scroll,
+                                    previous_selected: *previous_selected,
+                                    scroll: 0,
+                                    previous_show_headers: *previous_show_headers,
+                                };
+                            }
+                            _ => {}
+                        }
+                    }
+
                 }
 
             }

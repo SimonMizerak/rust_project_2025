@@ -67,11 +67,25 @@ pub fn get_passwords_by_account(
     rows
 }
 
-pub fn delete_account(conn: &Connection, account: &str) -> Result<usize> {
-    let result = conn.execute(
-        "DELETE FROM passwords WHERE account = ?1",
-        params![account],
+pub fn delete_vault(conn: &Connection, account: &str, username: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "DELETE FROM passwords WHERE account = ?1 AND username = ?2",
+        &[account, username],
     )?;
+    Ok(())
+}
 
-    Ok(result)
+pub fn update_vault(
+    conn: &Connection,
+    old_account: &str,
+    old_username: &str,
+    new_account: &str,
+    new_username: &str,
+    new_encrypted_password: &[u8],
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE passwords SET account = ?1, username = ?2, password_encrypted = ?3 WHERE account = ?4 AND username = ?5",
+        params![new_account, new_username, new_encrypted_password, old_account, old_username],
+    )?;
+    Ok(())
 }

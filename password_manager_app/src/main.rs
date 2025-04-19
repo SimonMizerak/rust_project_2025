@@ -69,6 +69,8 @@ enum AppState {
         previous_scroll: u16,
         previous_selected: usize,
         previous_show_headers: bool,
+
+        started_editing: bool,
     },
     SearchVault {
         input_buffer: String,
@@ -345,15 +347,11 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                         _ => "",
                     };
 
-                    let display_value = if input_buffer.is_empty() {
-                        current_value
-                    } else {
-                        input_buffer
-                    };
+                    let display_value = input_buffer;
 
                     let lines = vec![
                         Line::from(Span::styled(label, Style::default().fg(Color::Rgb(255, 60, 60)).add_modifier(Modifier::BOLD))),
-                        Line::from(Span::styled(display_value, Style::default().fg(Color::White))),
+                        Line::from(Span::styled(display_value.as_str(), Style::default().fg(Color::White))),
                     ];
                     
                     let paragraph = Paragraph::new(Text::from(lines))
@@ -575,6 +573,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                     previous_scroll: *previous_scroll,
                                     previous_selected: *previous_selected,
                                     previous_show_headers: *previous_show_headers,
+                                    started_editing: false,
                                 };
                             }
                             _ => {}
@@ -680,6 +679,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                         previous_scroll,
                         previous_selected,
                         previous_show_headers,
+                        started_editing,
                     } => {
                         match code {
                             KeyCode::Char(c) => input_buffer.push(c),
@@ -722,13 +722,18 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                             }
                                         });
 
+                                        let selected_index = updated_entries
+                                            .iter()
+                                            .position(|(a, u, _)| a == account && u == username)
+                                            .unwrap_or(0);
+
                                         *state = AppState::ViewVaultDetail {
                                             account: account.clone(),
                                             username: username.clone(),
                                             password: password.clone(),
                                             previous_entries: updated_entries,
                                             previous_scroll: 0,
-                                            previous_selected: 0,
+                                            previous_selected: selected_index,
                                             scroll: 0,
                                             previous_show_headers: true,
                                         };

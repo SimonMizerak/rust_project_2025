@@ -26,6 +26,7 @@ use ratatui::{
 };
 use std::error::Error;
 use arboard::Clipboard;
+use crossterm::cursor::Hide;
 
 enum AppState {
     Menu,
@@ -35,6 +36,7 @@ enum AppState {
         username: String,
         password: String,
         input_buffer: String,
+        cursor_pos: usize,
     },
     ShowAllVaults {
         entries: Vec<(String, String, String)>,
@@ -100,7 +102,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
 
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, Hide)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -202,7 +204,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                     f.render_widget(paragraph, chunks[1]);
                 }
 
-                AppState::CreateAccount { step, input_buffer, account, username, password } => {
+                AppState::CreateAccount { step, input_buffer, account, username, password, cursor_pos} => {
                     let label = match step {
                         0 => "Enter website name:",
                         1 => "Enter email/username:",
@@ -210,9 +212,45 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                         _ => "Finito!",
                     };
 
+                    let cursor_pos = std::cmp::min(*cursor_pos, input_buffer.len());
+
+                    let before = &input_buffer[..cursor_pos];
+                    let cursor_char = input_buffer
+                        .chars()
+                        .nth(cursor_pos)
+                        .unwrap_or(' ');
+
+                    let after = if cursor_pos < input_buffer.len() {
+                        &input_buffer[cursor_pos + cursor_char.len_utf8()..]
+                    } else {
+                        ""
+                    };
+
+                    let cursor_pos = std::cmp::min(cursor_pos, input_buffer.len());
+
+                    let before = &input_buffer[..cursor_pos];
+                    let cursor_char = input_buffer.chars().nth(cursor_pos).unwrap_or(' ');
+                    let after = if cursor_pos < input_buffer.len() {
+                        &input_buffer[cursor_pos + cursor_char.len_utf8()..]
+                    } else {
+                        ""
+                    };
+
+                    let spans = vec![
+                        Span::styled(before, Style::default().fg(Color::White)),
+                        Span::styled(
+                            cursor_char.to_string(),
+                            Style::default()
+                                .fg(Color::Black)
+                                .bg(Color::Rgb(0, 255, 255))
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(after, Style::default().fg(Color::White)),
+                    ];
+
                     let lines = vec![
                         Line::from(Span::styled(label, Style::default().fg(Color::Rgb(255, 60, 60)).add_modifier(Modifier::BOLD))),
-                        Line::from(Span::styled(input_buffer.as_str(), Style::default().fg(Color::White))),
+                        Line::from(spans),
                     ];
 
                     let paragraph = Paragraph::new(Text::from(lines))
@@ -220,6 +258,11 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                         .style(Style::default().fg(Color::Rgb(0, 255, 255)));
 
                     f.render_widget(paragraph, chunks[1]);
+
+                    let actual_pos = std::cmp::min(cursor_pos, input_buffer.len());
+                    let cursor_x = chunks[1].x + 1 + actual_pos as u16;
+                    let cursor_y = chunks[1].y + 2;
+                    //f.set_cursor(cursor_x, cursor_y);
                 }
 
                 AppState::ViewVaultDetail { account, username, password, scroll, copy_message, ..} => {
@@ -475,6 +518,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                         username: String::new(),
                                         password: String::new(),
                                         input_buffer: String::new(),
+                                        cursor_pos: 0,
                                     };
                                 }
                                 1 => { *state = AppState::SearchVault {
@@ -535,7 +579,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                     for (i, (acc, _, _)) in entries.iter().enumerate() {
                                         let first_letter = acc.chars().next().unwrap_or('?').to_ascii_uppercase();
                                         if Some(first_letter) != last_letter {
-                                            line_index += 1; // hlavička
+                                            line_index += 1;
                                             last_letter = Some(first_letter);
                                         }
                                         if i == *selected {
@@ -640,6 +684,14 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                 let mut new_entries = previous_entries.clone();
                                 new_entries.retain(|(a, u, _)| a != account || u != username);
 
+                                if new_entries.is_empty() {
+                                    new_entries.push((
+                                        "Sorry, no results :(".to_string(),
+                                        "".to_string(),
+                                        "".to_string(),
+                                    ));
+                                }
+                                
                                 *state = AppState::ShowAllVaults {
                                     entries: new_entries,
                                     scroll: *previous_scroll,
@@ -760,26 +812,50 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                         input_buffer,
                         account,
                         username,
-                        password
+                        password,
+                        cursor_pos,
                     } => {
                         match code {
                             KeyCode::Char(c) if *step == 2 && (c == '#') => {
                                 let generated = generate_strong_password(16);
                                 *password = generated.clone();
                                 *input_buffer = generated;
+                                *cursor_pos = input_buffer.len();
                             }
-                            KeyCode::Char(c) => input_buffer.push(c),
-                            KeyCode::Backspace => { input_buffer.pop(); }
+                            KeyCode::Char(c) => {
+                                if *cursor_pos <= input_buffer.len() {
+                                    input_buffer.insert(*cursor_pos, c);
+                                    *cursor_pos += 1;
+                                }
+                            }
+                            KeyCode::Backspace => {
+                                if *cursor_pos > 0 && *cursor_pos <= input_buffer.len() {
+                                    input_buffer.remove(*cursor_pos - 1);
+                                    *cursor_pos -= 1;
+                                }
+                            }
+                            KeyCode::Left => {
+                                if *cursor_pos > 0 {
+                                    *cursor_pos -= 1;
+                                }
+                            }
+                            KeyCode::Right => {
+                                if *cursor_pos < input_buffer.len() {
+                                    *cursor_pos += 1;
+                                }
+                            }
                             KeyCode::Enter => {
                                 match *step {
                                     0 => {
                                         *account = input_buffer.clone();
                                         input_buffer.clear();
+                                        *cursor_pos = 0;
                                         *step = 1;
                                     }
                                     1 => {
                                         *username = input_buffer.clone();
                                         input_buffer.clear();
+                                        *cursor_pos = 0;
                                         *step = 2;
                                     }
                                     2 => {
@@ -870,7 +946,6 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                         let encrypted = encrypt(password, key);
                                         update_vault(conn, old_account, old_username, account, username, encrypted.as_slice())?;
 
-                                        // znovu načítaj a zorad vaulty
                                         let mut updated_entries: Vec<(String, String, String)> = get_passwords(conn)?
                                             .into_iter()
                                             .map(|(a, u, e)| (a, u, base64::encode(e)))

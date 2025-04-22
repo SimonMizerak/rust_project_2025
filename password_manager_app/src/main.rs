@@ -1,3 +1,5 @@
+mod utils;
+use utils::generate_strong_password;
 use password_manager_lib::crypto::*;
 use password_manager_lib::encryption::*;
 use password_manager_lib::database::*;
@@ -87,18 +89,7 @@ enum AppState {
     }
 }
 
-fn generate_strong_password(len: usize) -> String {
-    use rand::{distributions::Alphanumeric, thread_rng, Rng};
-    thread_rng()
-        .sample_iter(&Alphanumeric)
-        .take(len)
-        .map(char::from)
-        .collect()
-}
-
-
 fn main() -> Result<(), Box<dyn Error>> {
-    // Terminál setup
     enable_raw_mode()?;
     let mut stdout = io::stdout();
 
@@ -106,7 +97,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let key = [42u8; 32]; // šifrovací kľúč
+    let key = [42u8; 32]; // šifrovací kľúč (Key)
     let conn = initialize_db("passwords.db")?;
 
     let mut state = AppState::Menu;

@@ -281,7 +281,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
 
                                 let copied_now = copy_message.as_ref()
                                     .map(|(msg, time)| {
-                                        time.elapsed().as_secs_f32() < 2.0 &&
+                                        time.elapsed().as_secs_f32() < 1.4 &&
                                             ((i == 1 && msg.contains("Email")) || (i == 2 && msg.contains("Password")))
                                     })
                                     .unwrap_or(false);

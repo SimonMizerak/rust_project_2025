@@ -232,8 +232,8 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                         Span::styled(
                             cursor_char.to_string(),
                             Style::default()
-                                .fg(Color::Black)
-                                .bg(Color::Rgb(0, 255, 255))
+                                .fg(Color::Rgb(0, 255, 255))
+                                .bg(Color::Rgb(255, 60, 60))
                                 .add_modifier(Modifier::BOLD),
                         ),
                         Span::styled(after, Style::default().fg(Color::White)),
@@ -253,7 +253,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                     let actual_pos = std::cmp::min(cursor_pos, input_buffer.len());
                     let cursor_x = chunks[1].x + 1 + actual_pos as u16;
                     let cursor_y = chunks[1].y + 2;
-                    //f.set_cursor(cursor_x, cursor_y);
+                    f.set_cursor(cursor_x, cursor_y);
                 }
 
                 AppState::ViewVaultDetail { account, username, password, scroll, copy_message, ..} => {
@@ -464,8 +464,8 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                     spans.push(Span::styled(
                         cursor_char.to_string(),
                         Style::default()
-                            .fg(Color::Black)
-                            .bg(Color::Rgb(0, 255, 255))
+                            .fg(Color::Rgb(0, 255, 255))
+                            .bg(Color::Rgb(255, 60, 60))
                             .add_modifier(Modifier::BOLD),
                     ));
                     spans.push(Span::styled(after, Style::default().fg(Color::White)));
@@ -481,7 +481,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
 
                     let cursor_x = chunks[1].x + 1 + cursor_pos as u16;
                     let cursor_y = chunks[1].y + 2;
-                    //f.set_cursor(cursor_x, cursor_y);
+                    f.set_cursor(cursor_x, cursor_y);
                 }
             }
         })?;

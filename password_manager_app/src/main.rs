@@ -295,11 +295,11 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                     .unwrap_or(false);
 
                                 let text = if copied_now {
-                                    "📋 (Copied Successfully!)"
+                                    "(Copied Successfully!)"
                                 } else if i == 1 {
                                     "📋 (Copy to clipboard - U)"
                                 } else {
-                                    "📋 (Copy to clipboard - P, Show Password - S)"
+                                    "📋 (Copy to clipboard - P, Show password - S)"
                                 };
 
                                 label_line.push(Span::styled(

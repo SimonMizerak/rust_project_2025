@@ -61,6 +61,7 @@ enum AppState {
         pass_emoji_pos: Option<(u16, u16)>,
 
         copy_message: Option<(String, std::time::Instant)>,
+        obscure_password: bool,
     },
     EditVault {
         step: usize,
@@ -256,12 +257,19 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                     f.set_cursor(cursor_x, cursor_y);
                 }
 
-                AppState::ViewVaultDetail { account, username, password, scroll, copy_message, ..} => {
+                AppState::ViewVaultDetail { account, username, password, scroll, copy_message, obscure_password, ..} => {
+                    let display_password = if *obscure_password {
+                        "•".repeat(password.chars().count())
+                    } else {
+                        password.clone()
+                    };
+
                     let labels = vec![
-                        ("Website", account),
-                        ("Email/Username", username),
-                        ("Password", password),
+                        ("Website", account.as_str()),
+                        ("Email/Username", username.as_str()),
+                        ("Password", display_password.as_str()),
                     ];
+
 
                     //let mut email_pos = None;
                     //let mut pass_pos = None;
@@ -289,9 +297,9 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                 let text = if copied_now {
                                     "📋 (Copied Successfully!)"
                                 } else if i == 1 {
-                                    "📋 (U - copy to clipboard)"
+                                    "📋 (Copy to clipboard - U)"
                                 } else {
-                                    "📋 (P - copy to clipboard)"
+                                    "📋 (Copy to clipboard - P, Show Password - S)"
                                 };
 
                                 label_line.push(Span::styled(
@@ -304,7 +312,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
 
                             vec![
                                 Line::from(label_line),
-                                Line::from(Span::styled(value.as_str(), Style::default().fg(Color::White))),
+                                Line::from(Span::styled(*value, Style::default().fg(Color::White))),
                                 Line::from(""),
                             ]
                         })
@@ -315,7 +323,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                     let actual_scroll = (*scroll as usize).min(max_scroll) as u16;
 
                     let paragraph = Paragraph::new(Text::from(content))
-                        .block(Block::default().title("Vault details (E - Edit, Delete - D, Go back - Esc)").borders(Borders::ALL))
+                        .block(Block::default().title("Vault details (Edit - E, Delete - D, Go back - Esc)").borders(Borders::ALL))
                         .style(Style::default().fg(Color::Rgb(0, 255, 255)))
                         .wrap(Wrap { trim: false });
 
@@ -628,6 +636,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                     email_emoji_pos: None,
                                     pass_emoji_pos: None,
                                     copy_message: None,
+                                    obscure_password: true,
                                 };
                             }
                             _ => {}
@@ -643,6 +652,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                         previous_selected,
                         scroll,
                         previous_show_headers,
+                        obscure_password,
                         ..
                     } => {
                         match code {
@@ -728,6 +738,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                     email_emoji_pos: None,
                                     pass_emoji_pos: None,
                                     copy_message: Some(("Email/Username copied!".to_string(), std::time::Instant::now())),
+                                    obscure_password: *obscure_password,
                                 };
                             }
                             KeyCode::Char('p') => {
@@ -747,6 +758,23 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                     email_emoji_pos: None,
                                     pass_emoji_pos: None,
                                     copy_message: Some(("Password copied!".to_string(), std::time::Instant::now())),
+                                    obscure_password: *obscure_password,
+                                };
+                            }
+                            KeyCode::Char('s') => {
+                                *state = AppState::ViewVaultDetail {
+                                    account: account.clone(),
+                                    username: username.clone(),
+                                    password: password.clone(),
+                                    previous_entries: previous_entries.clone(),
+                                    previous_scroll: *previous_scroll,
+                                    previous_selected: *previous_selected,
+                                    scroll: *scroll,
+                                    previous_show_headers: *previous_show_headers,
+                                    email_emoji_pos: None,
+                                    pass_emoji_pos: None,
+                                    copy_message: None,
+                                    obscure_password: !*obscure_password,
                                 };
                             }
                             _ => {}
@@ -968,6 +996,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                             email_emoji_pos: None,
                                             pass_emoji_pos: None,
                                             copy_message: None,
+                                            obscure_password: true,
                                         };
                                     }
                                     _ => {}
@@ -986,6 +1015,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                     email_emoji_pos: None,
                                     pass_emoji_pos: None,
                                     copy_message: None,
+                                    obscure_password: true,
                                 };
                             }
                             _ => {}

@@ -6,6 +6,7 @@ use base64;
 use std::io::{self, Write};
 use ratatui::layout::Direction;
 use ratatui::widgets::{List, ListItem, ListState};
+use ratatui::layout::Rect;
 use rusqlite::Connection;
 use ratatui::widgets::Wrap;
 use ratatui::text::Text;
@@ -30,7 +31,18 @@ use crossterm::cursor::Hide;
 pub mod utils;
 
 enum AppState {
+    Start,
     Menu,
+    Register {
+        step: usize,
+        username: String,
+        password: String,
+        password2: String,
+        input_buffer: String,
+        cursor_pos: usize,
+        error_message: Option<String>,
+        error_time: Option<std::time::Instant>,
+    },
     CreateAccount {
         step: usize,
         account: String,
@@ -100,7 +112,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let key = [42u8; 32]; // šifrovací kľúč (Key)
     let conn = initialize_db("passwords.db")?;
 
-    let mut state = AppState::Menu;
+    let mut state = AppState::Start;
 
     let result = run_app(&mut terminal, &key, &conn, &mut state);
 
@@ -140,9 +152,13 @@ impl MenuState {
         }
     }
 }
-const MENU_ITEMS: [&str; 6] = [
+
+const START_ITEMS: [&str; 3] = [
     "Login",
     "Register",
+    "End"
+];
+const MENU_ITEMS: [&str; 4] = [
     "Create vault",
     "Show all vaults",
     "Search vault",
@@ -162,10 +178,11 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                 .borders(Borders::ALL)
                 .style(Style::default().fg(Color::Cyan));
 
-            let items: Vec<ListItem> = MENU_ITEMS
-                .iter()
-                .map(|item| ListItem::new(*item))
-                .collect();
+            let items: Vec<ListItem> = match state {
+                AppState::Start => START_ITEMS.iter().map(|item| ListItem::new(*item)).collect(),
+                AppState::Menu => MENU_ITEMS.iter().map(|item| ListItem::new(*item)).collect(),
+                _ => vec![ListItem::new("Currently working in the terminal to the right.")],
+            };
 
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
@@ -194,6 +211,91 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
 
             //UI
             match state {
+                AppState::Start => {
+                    let paragraph = Paragraph::new("Pick an option.")
+                        .style(Style::default().fg(Color::Rgb(0, 255, 255)))
+                        .block(Block::default().title("Action").borders(Borders::ALL));
+                    f.render_widget(paragraph, chunks[1]);
+                }
+
+                AppState::Register {step, username, password, password2, input_buffer, cursor_pos, error_message, error_time} => {
+                    let label = match step {
+                        0 => "Enter nickname:",
+                        1 => "Enter password:",
+                        2 => "Re-enter password",
+                        _ => "Finito!",
+                    };
+
+                    let cursor_pos = std::cmp::min(*cursor_pos, input_buffer.len());
+
+                    let before = &input_buffer[..cursor_pos];
+                    let cursor_char = input_buffer
+                        .chars()
+                        .nth(cursor_pos)
+                        .unwrap_or(' ');
+
+                    let after = if cursor_pos < input_buffer.len() {
+                        &input_buffer[cursor_pos + cursor_char.len_utf8()..]
+                    } else {
+                    ""
+                    };
+
+                    let cursor_pos = std::cmp::min(cursor_pos, input_buffer.len());
+
+                    let before = &input_buffer[..cursor_pos];
+                    let cursor_char = input_buffer.chars().nth(cursor_pos).unwrap_or(' ');
+                    let after = if cursor_pos < input_buffer.len() {
+                    &input_buffer[cursor_pos + cursor_char.len_utf8()..]
+                    } else {
+                        ""
+                    };
+
+                    let spans = vec![
+                        Span::styled(before, Style::default().fg(Color::White)),
+                        Span::styled(
+                            cursor_char.to_string(),
+                            Style::default()
+                                .fg(Color::Rgb(0, 255, 255))
+                                .bg(Color::Rgb(255, 60, 60))
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(after, Style::default().fg(Color::White)),
+                    ];
+
+                    let lines = vec![
+                        Line::from(Span::styled(label, Style::default().fg(Color::Rgb(255, 60, 60)).add_modifier(Modifier::BOLD))),
+                        Line::from(spans),
+                    ];
+
+                    let paragraph = Paragraph::new(Text::from(lines))
+                        .block(Block::default().title("Registering (Cancel/Start - Esc)").borders(Borders::ALL))
+                        .style(Style::default().fg(Color::Rgb(0, 255, 255)));
+
+                    f.render_widget(paragraph, chunks[1]);
+
+                    let actual_pos = std::cmp::min(cursor_pos, input_buffer.len());
+                    let cursor_x = chunks[1].x + 1 + actual_pos as u16;
+                    let cursor_y = chunks[1].y + 2;
+                        f.set_cursor(cursor_x, cursor_y);
+
+                    if let Some(msg) = error_message {
+                        let error_paragraph = Paragraph::new(Text::from(Line::from(Span::styled(
+                            msg.as_str(),
+                            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                        ))))
+                            .block(Block::default().borders(Borders::ALL).title("Error"));
+
+                        let error_rect = Rect {
+                            x: chunks[1].x,
+                            y: chunks[1].y + 4,
+                            width: chunks[1].width,
+                            height: 3,
+                        };
+
+                        f.render_widget(error_paragraph, error_rect);
+                    }
+                }
+
                 AppState::Menu => {
                     let paragraph = Paragraph::new("Pick option in menu.")
                         .style(Style::default().fg(Color::Rgb(0, 255, 255)))
@@ -505,6 +607,119 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                 let selected = list_state.selected().unwrap_or(0);
 
                 match state {
+                    AppState::Start => {
+                        match code {
+                            KeyCode::Down => {
+                                let new_index = (selected + 1).min(MENU_ITEMS.len() - 1);
+                                list_state.select(Some(new_index));
+                            }
+                            KeyCode::Up => {
+                                let new_index = selected.saturating_sub(1);
+                                list_state.select(Some(new_index));
+                            }
+                            KeyCode::Enter => match selected {
+                                0 => {
+                                    *state = AppState::Menu;
+                                },
+                                1 => {
+                                    *state = AppState::Register {
+                                        step: 0,
+                                        username: String::new(),
+                                        password: String::new(),
+                                        password2: String::new(),
+                                        input_buffer: String::new(),
+                                        cursor_pos: 0,
+                                        error_message: None,
+                                        error_time: None,
+                                    };
+                                },
+                                2 => return Ok(()),
+                                _ => {}
+                            },
+                            KeyCode::Char('q') => return Ok(()),
+                            _ => {}
+                        }
+                    }
+
+                    AppState::Register {step, username, password, password2, input_buffer, cursor_pos, error_message, error_time} => {
+                        match code {
+                            KeyCode::Char(c) => {
+                                if *cursor_pos <= input_buffer.len() {
+                                    input_buffer.insert(*cursor_pos, c);
+                                    *cursor_pos += 1;
+                                }
+                            }
+                            KeyCode::Backspace => {
+                                if *cursor_pos > 0 && *cursor_pos <= input_buffer.len() {
+                                    input_buffer.remove(*cursor_pos - 1);
+                                    *cursor_pos -= 1;
+                                }
+                            }
+                            KeyCode::Left => {
+                                if *cursor_pos > 0 {
+                                    *cursor_pos -= 1;
+                                }
+                            }
+                            KeyCode::Right => {
+                                if *cursor_pos < input_buffer.len() {
+                                    *cursor_pos += 1;
+                                }
+                            }
+                            KeyCode::Enter => {
+                                match *step {
+                                    0 => {
+                                        let mut stmt = conn.prepare("SELECT 1 FROM users WHERE username = ?1")?;
+                                        let exists = stmt.exists([input_buffer.as_str()])?;
+
+                                        if exists {
+                                            *error_message = Some("Username already taken".to_string());
+                                            *error_time = Some(std::time::Instant::now());
+                                            input_buffer.clear();
+                                            *cursor_pos = 0;
+                                        } else {
+                                            *username = input_buffer.clone();
+                                            input_buffer.clear();
+                                            *cursor_pos = 0;
+                                            *step = 1;
+                                        }
+                                    }
+                                    1 => {
+                                        *password = input_buffer.clone();
+                                        input_buffer.clear();
+                                        *cursor_pos = 0;
+                                        *step = 2;
+                                    }
+                                    2 => {
+                                        *password2 = input_buffer.clone();
+                                        if password == password2 {
+                                            if let Err(err) = register_user(conn, username, password) {
+                                                *error_message = Some(format!("Failed to register: {}", err));
+                                                *error_time = Some(std::time::Instant::now());
+                                                *step = 0;
+                                            } else {
+                                                input_buffer.clear();
+                                                *cursor_pos = 0;
+                                                *state = AppState::Menu;
+                                            }
+                                        }
+
+                                        else {
+                                            *error_message = Some("Passwords do not match".to_string());
+                                            *error_time = Some(std::time::Instant::now());
+                                            *step = 1;
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            KeyCode::Esc => {
+                                input_buffer.clear();
+                                *state = AppState::Start;
+                            }
+                            _ => {}
+                        }
+                    }
+
                     AppState::Menu => {
                         match code {
                             KeyCode::Down => {

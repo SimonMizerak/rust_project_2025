@@ -43,6 +43,15 @@ enum AppState {
         error_message: Option<String>,
         error_time: Option<std::time::Instant>,
     },
+    Login {
+        step: usize,
+        username: String,
+        password: String,
+        input_buffer: String,
+        cursor_pos: usize,
+        error_message: Option<String>,
+        error_time: Option<std::time::Instant>,
+    },
     CreateAccount {
         step: usize,
         account: String,
@@ -277,6 +286,83 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                     let cursor_x = chunks[1].x + 1 + actual_pos as u16;
                     let cursor_y = chunks[1].y + 2;
                         f.set_cursor(cursor_x, cursor_y);
+
+                    if let Some(msg) = error_message {
+                        let error_paragraph = Paragraph::new(Text::from(Line::from(Span::styled(
+                            msg.as_str(),
+                            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                        ))))
+                            .block(Block::default().borders(Borders::ALL).title("Error"));
+
+                        let error_rect = Rect {
+                            x: chunks[1].x,
+                            y: chunks[1].y + 4,
+                            width: chunks[1].width,
+                            height: 3,
+                        };
+
+                        f.render_widget(error_paragraph, error_rect);
+                    }
+                }
+
+                AppState::Login {step, username, password, input_buffer, cursor_pos, error_message, error_time} => {
+                    let label = match step {
+                        0 => "Enter nickname:",
+                        1 => "Enter password:",
+                        _ => "Finito!",
+                    };
+
+                    let cursor_pos = std::cmp::min(*cursor_pos, input_buffer.len());
+
+                    let before = &input_buffer[..cursor_pos];
+                    let cursor_char = input_buffer
+                        .chars()
+                        .nth(cursor_pos)
+                        .unwrap_or(' ');
+
+                    let after = if cursor_pos < input_buffer.len() {
+                        &input_buffer[cursor_pos + cursor_char.len_utf8()..]
+                    } else {
+                        ""
+                    };
+
+                    let cursor_pos = std::cmp::min(cursor_pos, input_buffer.len());
+
+                    let before = &input_buffer[..cursor_pos];
+                    let cursor_char = input_buffer.chars().nth(cursor_pos).unwrap_or(' ');
+                    let after = if cursor_pos < input_buffer.len() {
+                        &input_buffer[cursor_pos + cursor_char.len_utf8()..]
+                    } else {
+                        ""
+                    };
+
+                    let spans = vec![
+                        Span::styled(before, Style::default().fg(Color::White)),
+                        Span::styled(
+                            cursor_char.to_string(),
+                            Style::default()
+                                .fg(Color::Rgb(0, 255, 255))
+                                .bg(Color::Rgb(255, 60, 60))
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(after, Style::default().fg(Color::White)),
+                    ];
+
+                    let lines = vec![
+                        Line::from(Span::styled(label, Style::default().fg(Color::Rgb(255, 60, 60)).add_modifier(Modifier::BOLD))),
+                        Line::from(spans),
+                    ];
+
+                    let paragraph = Paragraph::new(Text::from(lines))
+                        .block(Block::default().title("Logging In (Cancel/Start - Esc)").borders(Borders::ALL))
+                        .style(Style::default().fg(Color::Rgb(0, 255, 255)));
+
+                    f.render_widget(paragraph, chunks[1]);
+
+                    let actual_pos = std::cmp::min(cursor_pos, input_buffer.len());
+                    let cursor_x = chunks[1].x + 1 + actual_pos as u16;
+                    let cursor_y = chunks[1].y + 2;
+                    f.set_cursor(cursor_x, cursor_y);
 
                     if let Some(msg) = error_message {
                         let error_paragraph = Paragraph::new(Text::from(Line::from(Span::styled(
@@ -619,7 +705,15 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                             }
                             KeyCode::Enter => match selected {
                                 0 => {
-                                    *state = AppState::Menu;
+                                    *state = AppState::Login {
+                                        step: 0,
+                                        username: String::new(),
+                                        password: String::new(),
+                                        input_buffer: String::new(),
+                                        cursor_pos: 0,
+                                        error_message: None,
+                                        error_time: None,
+                                    };
                                 },
                                 1 => {
                                     *state = AppState::Register {
@@ -707,6 +801,71 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                             *error_message = Some("Passwords do not match".to_string());
                                             *error_time = Some(std::time::Instant::now());
                                             *step = 1;
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            KeyCode::Esc => {
+                                input_buffer.clear();
+                                *state = AppState::Start;
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    AppState::Login {step, username, password, input_buffer, cursor_pos, error_message, error_time} => {
+                        match code {
+                            KeyCode::Char(c) => {
+                                if *cursor_pos <= input_buffer.len() {
+                                    input_buffer.insert(*cursor_pos, c);
+                                    *cursor_pos += 1;
+                                }
+                            }
+                            KeyCode::Backspace => {
+                                if *cursor_pos > 0 && *cursor_pos <= input_buffer.len() {
+                                    input_buffer.remove(*cursor_pos - 1);
+                                    *cursor_pos -= 1;
+                                }
+                            }
+                            KeyCode::Left => {
+                                if *cursor_pos > 0 {
+                                    *cursor_pos -= 1;
+                                }
+                            }
+                            KeyCode::Right => {
+                                if *cursor_pos < input_buffer.len() {
+                                    *cursor_pos += 1;
+                                }
+                            }
+                            KeyCode::Enter => {
+                                match *step {
+                                    0 => {
+                                        let mut stmt = conn.prepare("SELECT 1 FROM users WHERE username = ?1")?;
+                                        let exists = stmt.exists([input_buffer.as_str()])?;
+
+                                        if !exists {
+                                            *error_message = Some("User doesn't exist. Please Register.".to_string());
+                                            *error_time = Some(std::time::Instant::now());
+                                            input_buffer.clear();
+                                            *cursor_pos = 0;
+                                        } else {
+                                            *username = input_buffer.clone();
+                                            input_buffer.clear();
+                                            *cursor_pos = 0;
+                                            *step = 1;
+                                        }
+                                    }
+                                    1 => {
+                                        *password = input_buffer.clone();
+                                        input_buffer.clear();
+                                        if let Some(user_id) = login_user(conn, username, password) {
+                                            *cursor_pos = 0;
+                                            *state = AppState::Menu;
+                                        } else {
+                                            *error_message = Some("Invalid password. Please try again.".to_string());
+                                            *error_time = Some(std::time::Instant::now());
+                                            *cursor_pos = 0;
                                         }
                                     }
                                     _ => {}

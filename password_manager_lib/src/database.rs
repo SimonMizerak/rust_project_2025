@@ -33,20 +33,21 @@ pub fn insert_password(
     account: &str,
     username: &str,
     password_encrypted: &[u8],
+    user_id: &i64,
 ) -> Result<()> {
     conn.execute(
-        "INSERT INTO passwords (account, username, password_encrypted) VALUES (?1, ?2, ?3)",
-        params![account, username, password_encrypted],
+        "INSERT INTO passwords (user_id, account, username, password_encrypted) VALUES (?1, ?2, ?3, ?4)",
+        params![user_id, account, username, password_encrypted],
     )?;
 
     Ok(())
 }
 
-pub fn get_passwords(conn: &Connection) -> Result<Vec<(String, String, Vec<u8>)>> {
-    let mut stmt = conn.prepare("SELECT account, username, password_encrypted FROM passwords")?;
+pub fn get_passwords(conn: &Connection, user_id: &i64) -> Result<Vec<(String, String, Vec<u8>)>> {
+    let mut stmt = conn.prepare("SELECT account, username, password_encrypted FROM passwords WHERE user_id = ?1")?;
 
     let result = stmt
-        .query_map([], |row| {
+        .query_map(params![user_id], |row| {
             Ok((
                 row.get(0)?, // account
                 row.get(1)?, // username
@@ -58,31 +59,10 @@ pub fn get_passwords(conn: &Connection) -> Result<Vec<(String, String, Vec<u8>)>
     result
 }
 
-pub fn get_passwords_by_account(
-    conn: &Connection,
-    account: &str,
-) -> Result<Vec<(String, String, Vec<u8>)>> {
-    let mut stmt = conn.prepare(
-        "SELECT account, username, password_encrypted FROM passwords WHERE account = ?1",
-    )?;
-
-    let rows = stmt
-        .query_map(params![account], |row| {
-            Ok((
-                row.get(0)?, // account
-                row.get(1)?, // username
-                row.get(2)?, // password_encrypted
-            ))
-        })?
-        .collect();
-
-    rows
-}
-
-pub fn delete_vault(conn: &Connection, account: &str, username: &str) -> rusqlite::Result<()> {
+pub fn delete_vault(conn: &Connection, account: &str, username: &str, user_id: &i64) -> rusqlite::Result<()> {
     conn.execute(
-        "DELETE FROM passwords WHERE account = ?1 AND username = ?2",
-        &[account, username],
+        "DELETE FROM passwords WHERE account = ?1 AND username = ?2 AND user_id = ?3",
+        params![account, username, user_id],
     )?;
     Ok(())
 }
@@ -94,10 +74,11 @@ pub fn update_vault(
     new_account: &str,
     new_username: &str,
     new_encrypted_password: &[u8],
+    user_id: &i64,
 ) -> rusqlite::Result<()> {
     conn.execute(
-        "UPDATE passwords SET account = ?1, username = ?2, password_encrypted = ?3 WHERE account = ?4 AND username = ?5",
-        params![new_account, new_username, new_encrypted_password, old_account, old_username],
+        "UPDATE passwords SET account = ?1, username = ?2, password_encrypted = ?3 WHERE account = ?4 AND username = ?5 AND user_id = ?6",
+        params![new_account, new_username, new_encrypted_password, old_account, old_username, user_id],
     )?;
     Ok(())
 }

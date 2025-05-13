@@ -32,7 +32,9 @@ pub mod utils;
 
 enum AppState {
     Start,
-    Menu,
+    Menu {
+        user_id: i64,
+    },
     Register {
         step: usize,
         username: String,
@@ -53,6 +55,7 @@ enum AppState {
         error_time: Option<std::time::Instant>,
     },
     CreateAccount {
+        user_id: i64,
         step: usize,
         account: String,
         username: String,
@@ -61,6 +64,7 @@ enum AppState {
         cursor_pos: usize,
     },
     ShowAllVaults {
+        user_id: i64,
         entries: Vec<(String, String, String)>,
         scroll: u16,
         selected: usize,
@@ -68,6 +72,7 @@ enum AppState {
         show_headers: bool,
     },
     ViewVaultDetail {
+        user_id: i64,
         account: String,
         username: String,
         password: String,
@@ -84,6 +89,7 @@ enum AppState {
         obscure_password: bool,
     },
     EditVault {
+        user_id: i64,
         step: usize,
         account: String,
         username: String,
@@ -106,6 +112,7 @@ enum AppState {
         cursor_pos: usize,
     },
     SearchVault {
+        user_id: i64,
         input_buffer: String,
     }
 }
@@ -189,7 +196,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
 
             let items: Vec<ListItem> = match state {
                 AppState::Start => START_ITEMS.iter().map(|item| ListItem::new(*item)).collect(),
-                AppState::Menu => MENU_ITEMS.iter().map(|item| ListItem::new(*item)).collect(),
+                AppState::Menu {user_id}=> MENU_ITEMS.iter().map(|item| ListItem::new(*item)).collect(),
                 _ => vec![ListItem::new("Currently working in the terminal to the right.")],
             };
 
@@ -382,14 +389,14 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                     }
                 }
 
-                AppState::Menu => {
+                AppState::Menu {user_id} => {
                     let paragraph = Paragraph::new("Pick option in menu.")
                         .style(Style::default().fg(Color::Rgb(0, 255, 255)))
                         .block(Block::default().title("Action").borders(Borders::ALL));
                     f.render_widget(paragraph, chunks[1]);
                 }
 
-                AppState::CreateAccount { step, input_buffer, account, username, password, cursor_pos} => {
+                AppState::CreateAccount {user_id, step, input_buffer, account, username, password, cursor_pos} => {
                     let label = match step {
                         0 => "Enter website name:",
                         1 => "Enter email/username:",
@@ -524,7 +531,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                 }
 
 
-                AppState::ShowAllVaults { entries, scroll, selected, show_password, show_headers } => {
+                AppState::ShowAllVaults {user_id, entries, scroll, selected, show_password, show_headers } => {
                     let mut lines = vec![];
                     let mut last_letter: Option<char> = None;
                     let mut entry_line_indices = vec![];
@@ -608,7 +615,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
 
                 }
                 
-                AppState::SearchVault { input_buffer } => {
+                AppState::SearchVault {user_id, input_buffer } => {
                     let lines = vec![
                         Line::from(Span::styled("Enter website name to filter:", Style::default().fg(Color::Rgb(255, 60, 60)).add_modifier(Modifier::BOLD))),
                         Line::from(Span::styled(input_buffer.as_str(), Style::default().fg(Color::White))),
@@ -791,9 +798,18 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                                 *error_time = Some(std::time::Instant::now());
                                                 *step = 0;
                                             } else {
-                                                input_buffer.clear();
-                                                *cursor_pos = 0;
-                                                *state = AppState::Menu;
+                                                match get_user_id(conn, username) {
+                                                    Ok(user_id) => {
+                                                        input_buffer.clear();
+                                                        *cursor_pos = 0;
+                                                        *state = AppState::Menu { user_id };
+                                                    }
+                                                    Err(err) => {
+                                                        *error_message = Some(format!("Failed to get user ID: {}", err));
+                                                        *error_time = Some(std::time::Instant::now());
+                                                        *step = 0;
+                                                    }
+                                                }
                                             }
                                         }
 
@@ -861,7 +877,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                         input_buffer.clear();
                                         if let Some(user_id) = login_user(conn, username, password) {
                                             *cursor_pos = 0;
-                                            *state = AppState::Menu;
+                                            *state = AppState::Menu { user_id };
                                         } else {
                                             *error_message = Some("Invalid password. Please try again.".to_string());
                                             *error_time = Some(std::time::Instant::now());
@@ -879,7 +895,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                         }
                     }
 
-                    AppState::Menu => {
+                    AppState::Menu {user_id} => {
                         match code {
                             KeyCode::Down => {
                                 let new_index = (selected + 1).min(MENU_ITEMS.len() - 1);
@@ -892,6 +908,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                             KeyCode::Enter => match selected {
                                 0 => {
                                     *state = AppState::CreateAccount {
+                                        user_id: user_id.clone(),
                                         step: 0,
                                         account: String::new(),
                                         username: String::new(),
@@ -901,9 +918,10 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                     };
                                 }
                                 1 => { *state = AppState::SearchVault {
+                                    user_id: {user_id.clone()},
                                     input_buffer: String::new(),}; }
                                 2 => {
-                                    let mut vaults: Vec<(String, String, String)> = get_passwords(conn)?
+                                    let mut vaults: Vec<(String, String, String)> = get_passwords(conn, user_id)?
                                         .into_iter()
                                         .map(|(acc, user, enc)| (acc, user, base64::encode(enc)))
                                         .collect();
@@ -928,6 +946,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                     });
 
                                     *state = AppState::ShowAllVaults {
+                                        user_id: user_id.clone(),
                                         entries: vaults,
                                         scroll: 0,
                                         selected: 0,
@@ -935,7 +954,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                         show_headers,
                                     };
                                 }
-                                3 => return Ok(()),
+                                3 => *state = AppState::Start,
                                 _ => {}
                             },
                             KeyCode::Char('q') => return Ok(()),
@@ -943,10 +962,10 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                         }
                     }
 
-                    AppState::ShowAllVaults { scroll, selected, show_password, entries, show_headers} => {
+                    AppState::ShowAllVaults {user_id, scroll, selected, show_password, entries, show_headers} => {
                         match code {
                             KeyCode::Esc => {
-                                *state = AppState::Menu;
+                                *state = AppState::Menu {user_id: user_id.clone()};
                             }
                             KeyCode::Down => {
                                 if *selected < entries.len().saturating_sub(1) {
@@ -1005,6 +1024,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                 let decrypted = decrypt(&base64::decode(enc).unwrap_or_default(), key).unwrap_or("ERR".to_string());
 
                                 *state = AppState::ViewVaultDetail {
+                                    user_id: user_id.clone(),
                                     account: acc.clone(),
                                     username: user.clone(),
                                     password: decrypted,
@@ -1024,6 +1044,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                     }
 
                     AppState::ViewVaultDetail {
+                        user_id,
                         account,
                         username,
                         password,
@@ -1038,6 +1059,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                         match code {
                             KeyCode::Esc => {
                                 *state = AppState::ShowAllVaults {
+                                    user_id: user_id.clone(),
                                     entries: previous_entries.clone(),
                                     scroll: *previous_scroll,
                                     selected: *previous_selected,
@@ -1061,7 +1083,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                 }
                             }
                             KeyCode::Char('d') => {
-                                delete_vault(conn, account, username)?;
+                                delete_vault(conn, account, username, user_id)?;
                                 let mut new_entries = previous_entries.clone();
                                 new_entries.retain(|(a, u, _)| a != account || u != username);
 
@@ -1074,6 +1096,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                 }
                                 
                                 *state = AppState::ShowAllVaults {
+                                    user_id: user_id.clone(),
                                     entries: new_entries,
                                     scroll: *previous_scroll,
                                     selected: 0,
@@ -1083,6 +1106,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                             }
                             KeyCode::Char('e') => {
                                 *state = AppState::EditVault {
+                                    user_id: user_id.clone(),
                                     step: 0,
                                     account: account.clone(),
                                     username: username.clone(),
@@ -1107,6 +1131,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                 }
 
                                 *state = AppState::ViewVaultDetail {
+                                    user_id: user_id.clone(),
                                     account: account.clone(),
                                     username: username.clone(),
                                     password: password.clone(),
@@ -1127,6 +1152,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                 }
 
                                 *state = AppState::ViewVaultDetail {
+                                    user_id: user_id.clone(),
                                     account: account.clone(),
                                     username: username.clone(),
                                     password: password.clone(),
@@ -1143,6 +1169,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                             }
                             KeyCode::Char('s') => {
                                 *state = AppState::ViewVaultDetail {
+                                    user_id: user_id.clone(),
                                     account: account.clone(),
                                     username: username.clone(),
                                     password: password.clone(),
@@ -1161,7 +1188,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                         }
                     }
 
-                    AppState::SearchVault { input_buffer } => {
+                    AppState::SearchVault {user_id, input_buffer } => {
                         match code {
                             KeyCode::Char(c) => input_buffer.push(c),
                             KeyCode::Backspace => { input_buffer.pop(); }
@@ -1170,7 +1197,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                     continue;
                                 }
                                 
-                                let filtered: Vec<_> = get_passwords(conn)?
+                                let filtered: Vec<_> = get_passwords(conn, user_id)?
                                     .into_iter()
                                     .filter(|(site, _, _)| site.to_lowercase().contains(&input_buffer.to_lowercase()))
                                     .map(|(acc, user, enc)| (acc, user, base64::encode(enc)))
@@ -1192,6 +1219,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                 });
 
                                 *state = AppState::ShowAllVaults {
+                                    user_id: user_id.clone(),
                                     entries,
                                     scroll: 0,
                                     selected: 0,
@@ -1200,13 +1228,14 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                 };
                             }
                             KeyCode::Esc => {
-                                *state = AppState::Menu;
+                                *state = AppState::Menu{user_id: user_id.clone(),};
                             }
                             _ => {}
                         }
                     }
 
                     AppState::CreateAccount {
+                        user_id,
                         step,
                         input_buffer,
                         account,
@@ -1261,20 +1290,21 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                         *password = input_buffer.clone();
 
                                         let encrypted = encrypt(password, key);
-                                        insert_password(conn, account, username, &encrypted)?;
-                                        *state = AppState::Menu;
+                                        insert_password(conn, account, username, &encrypted, user_id)?;
+                                        *state = AppState::Menu{user_id: user_id.clone(),};
                                     }
                                     _ => {}
                                 }
                             }
                             KeyCode::Esc => {
-                                *state = AppState::Menu;
+                                *state = AppState::Menu{user_id: user_id.clone(),};
                             }
                             _ => {}
                         }
                     }
 
                     AppState::EditVault {
+                        user_id,
                         step,
                         account,
                         username,
@@ -1343,9 +1373,9 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                         *password = temp_password.clone();
 
                                         let encrypted = encrypt(password, key);
-                                        update_vault(conn, old_account, old_username, account, username, encrypted.as_slice())?;
+                                        update_vault(conn, old_account, old_username, account, username, encrypted.as_slice(), user_id)?;
 
-                                        let mut updated_entries: Vec<(String, String, String)> = get_passwords(conn)?
+                                        let mut updated_entries: Vec<(String, String, String)> = get_passwords(conn, user_id)?
                                             .into_iter()
                                             .map(|(a, u, e)| (a, u, base64::encode(e)))
                                             .collect();
@@ -1365,6 +1395,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                             .unwrap_or(0);
 
                                         *state = AppState::ViewVaultDetail {
+                                            user_id: user_id.clone(),
                                             account: account.clone(),
                                             username: username.clone(),
                                             password: password.clone(),
@@ -1384,6 +1415,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                             }
                             KeyCode::Esc => {
                                 *state = AppState::ViewVaultDetail {
+                                    user_id: user_id.clone(),
                                     account: old_account.clone(),
                                     username: old_username.clone(),
                                     password: password.clone(),

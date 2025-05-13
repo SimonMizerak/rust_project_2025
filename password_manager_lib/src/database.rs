@@ -42,11 +42,11 @@ pub fn insert_password(
     Ok(())
 }
 
-pub fn get_passwords(conn: &Connection, user_id: i64) -> Result<Vec<(String, String, Vec<u8>)>> {
-    let mut stmt = conn.prepare("SELECT account, username, password_encrypted FROM passwords WHERE user_id = ?1")?;
+pub fn get_passwords(conn: &Connection) -> Result<Vec<(String, String, Vec<u8>)>> {
+    let mut stmt = conn.prepare("SELECT account, username, password_encrypted FROM passwords")?;
 
     let result = stmt
-        .query_map(params![user_id], |row| {
+        .query_map([], |row| {
             Ok((
                 row.get(0)?, // account
                 row.get(1)?, // username

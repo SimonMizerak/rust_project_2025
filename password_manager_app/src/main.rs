@@ -70,7 +70,7 @@ enum AppState {
         input_buffer: String,
         old_account: String,
         old_username: String,
-        
+
         temp_account: String,
         temp_username: String,
         temp_password: String,
@@ -86,30 +86,8 @@ enum AppState {
     },
     SearchVault {
         input_buffer: String,
-    },
-    Login {
-        step: usize,
-        username: String,
-        password: String,
-        input_buffer: String, //for inserting info
-        cursor_pos: usize,
-        error: Option<String>,
-    },
-    Register {
-        step: usize,
-        username: String,
-        password: String,
-        input_buffer: String,
-        cursor_pos: usize,
-        error: Option<String>,
-    },
-    Authenticated {
-        user_id: i64,
-        username: String,
-        menu_state: MenuState,
     }
 }
-
 // Setting up console environment
 fn main() -> Result<(), Box<dyn Error>> {
     enable_raw_mode()?;
@@ -162,13 +140,9 @@ impl MenuState {
         }
     }
 }
-
-const LOGIN_MENU_ITEMS: [&str; 3] = [
+const MENU_ITEMS: [&str; 6] = [
     "Login",
     "Register",
-    "End"
-];
-const MENU_ITEMS: [&str; 4] = [
     "Create vault",
     "Show all vaults",
     "Search vault",
@@ -521,70 +495,6 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                     let cursor_x = chunks[1].x + 1 + cursor_pos as u16;
                     let cursor_y = chunks[1].y + 2;
                     f.set_cursor(cursor_x, cursor_y);
-                }
-
-                AppState::Login { step, input_buffer, cursor_pos, error, .. }
-                | AppState::Register { step, input_buffer, cursor_pos, error, .. } => {
-                    let label = match step {
-                        0 => "Enter username:",
-                        1 => "Enter password:",
-                        _ => "Done",
-                    };
-
-                    let spans = vec![
-                        Span::styled(&input_buffer[..*cursor_pos], Style::default()),
-                        Span::styled(
-                            input_buffer.chars().nth(*cursor_pos).unwrap_or(' ').to_string(),
-                            Style::default().bg(Color::Red),
-                        ),
-                        Span::styled(&input_buffer[*cursor_pos..], Style::default()),
-                    ];
-
-                    let lines = vec![
-                        Line::from(Span::styled(label, Style::default().fg(Color::Yellow))),
-                        Line::from(spans),
-                        if let Some(err) = error {
-                            Line::from(Span::styled(err.as_str(), Style::default().fg(Color::Red)))
-                        } else {
-                            Line::from("")
-                        }
-                    ];
-
-                    let paragraph = Paragraph::new(Text::from(lines))
-                        .block(Block::default().title("Authentication").borders(Borders::ALL));
-
-                    f.render_widget(paragraph, chunks[1]);
-                    f.set_cursor(chunks[1].x + 1 + *cursor_pos as u16, chunks[1].y + 2);
-                }
-
-                AppState::Authenticated { username, menu_state, .. } => {
-                    let items: Vec<ListItem> = MENU_ITEMS
-                        .iter()
-                        .map(|item| ListItem::new(*item))
-                        .collect();
-
-                    let chunks = Layout::default()
-                        .direction(Direction::Horizontal)
-                        .margin(1)
-                        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
-                        .split(f.size());
-
-                    let menu = List::new(items)
-                        .block(Block::default().title(format!("Logged in as: {}", username)).borders(Borders::ALL))
-                        .highlight_style(
-                            Style::default()
-                                .fg(Color::Yellow)
-                                .add_modifier(Modifier::BOLD)
-                                .add_modifier(Modifier::REVERSED),
-                        )
-                        .highlight_symbol(">> ");
-
-                    f.render_stateful_widget(menu, chunks[0], &mut list_state);
-
-                    let hint = Paragraph::new("Use ↑↓ to navigate, Enter to select, Esc to log out")
-                        .block(Block::default().title("Info").borders(Borders::ALL));
-
-                    f.render_widget(hint, chunks[1]);
                 }
             }
         })?;
@@ -1113,148 +1023,6 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
                                     copy_message: None,
                                     obscure_password: true,
                                 };
-                            }
-                            _ => {}
-                        }
-                    }
-
-                    AppState::Login { step, input_buffer, username, password, cursor_pos, error } => {
-                        match code {
-                            KeyCode::Char(c) => {
-                                input_buffer.push(c);
-                                *cursor_pos += 1;
-                            }
-                            KeyCode::Backspace => {
-                                if *cursor_pos > 0 {
-                                    input_buffer.remove(*cursor_pos - 1);
-                                    *cursor_pos -= 1;
-                                }
-                            }
-                            KeyCode::Enter => {
-                                match *step {
-                                    0 => {
-                                        *username = input_buffer.clone();
-                                        input_buffer.clear();
-                                        *cursor_pos = 0;
-                                        *step = 1;
-                                    }
-                                    1 => {
-                                        *password = input_buffer.clone();
-
-                                        if let Some(user_id) = login_user(conn, username, password) {
-                                            *state = AppState::Authenticated;
-                                        } else {
-                                            *error = Some("Invalid credentials.".to_string());
-                                            *input_buffer = String::new();
-                                            *cursor_pos = 0;
-                                        }
-                                    }
-                                    _ => {}
-                                }
-                            }
-                            KeyCode::Esc => {
-                                *state = AppState::Menu;
-                            }
-                            _ => {}
-                        }
-
-                    }
-
-                    AppState::Register { step, input_buffer, username, password, cursor_pos, error } => {
-                        match code {
-                            KeyCode::Char(c) => {
-                                input_buffer.push(c);
-                                *cursor_pos += 1;
-                            }
-                            KeyCode::Backspace => {
-                                if *cursor_pos > 0 {
-                                    input_buffer.remove(*cursor_pos - 1);
-                                    *cursor_pos -= 1;
-                                }
-                            }
-                            KeyCode::Enter => {
-                                match *step {
-                                    0 => {
-                                        *username = input_buffer.clone();
-                                        input_buffer.clear();
-                                        *cursor_pos = 0;
-                                        *step = 1;
-                                    }
-                                    1 => {
-                                        *password = input_buffer.clone();
-
-                                        if register_user(conn, username, password).is_ok() {
-                                            *state = AppState::Authenticated{
-                                                user_id,
-                                                username: username.clone(),
-                                                menu_state: MenuState::new(),
-                                            };
-                                        } else {
-                                            *error = Some("User already exists.".to_string());
-                                            *input_buffer = String::new();
-                                            *cursor_pos = 0;
-                                        }
-                                    }
-                                    _ => {}
-                                }
-                            }
-                            KeyCode::Esc => {
-                                *state = AppState::Menu;
-                            }
-                            _ => {}
-                        }
-                    }
-
-                    AppState::Authenticated { user_id, username, menu_state } => {
-                        match code {
-                            KeyCode::Up => {
-                                menu_state.previous();
-                            }
-                            KeyCode::Down => {
-                                menu_state.next(MENU_ITEMS.len());
-                            }
-                            KeyCode::Enter => match menu_state.selected {
-                                0 => {
-                                    *state = AppState::CreateAccount {
-                                        step: 0,
-                                        account: String::new(),
-                                        username: String::new(),
-                                        password: String::new(),
-                                        input_buffer: String::new(),
-                                        cursor_pos: 0,
-                                    };
-                                }
-                                1 => {
-                                    // Show all vaults for user
-                                    let results = get_passwords(&conn, *user_id)?;
-                                    let entries: Vec<_> = results
-                                        .into_iter()
-                                        .map(|(account, username, encrypted)| {
-                                            let decrypted = decrypt_password(&encrypted, key).unwrap_or("ERROR".to_string());
-                                            (account, username, decrypted)
-                                        })
-                                        .collect();
-
-                                    *state = AppState::ShowAllVaults {
-                                        entries,
-                                        scroll: 0,
-                                        selected: 0,
-                                        show_password: false,
-                                        show_headers: true,
-                                    };
-                                }
-                                2 => {
-                                    *state = AppState::SearchVault {
-                                        input_buffer: String::new(),
-                                    };
-                                }
-                                3 => {
-                                    *state = AppState::Menu;
-                                }
-                                _ => {}
-                            },
-                            KeyCode::Esc => {
-                                *state = AppState::Menu;
                             }
                             _ => {}
                         }

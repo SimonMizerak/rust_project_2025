@@ -4,11 +4,22 @@ pub fn initialize_db(path: &str) -> Result<Connection> {
     let conn = Connection::open(path)?;
 
     conn.execute(
+    "CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        )",
+    [],
+    )?;
+
+    conn.execute(
         "CREATE TABLE IF NOT EXISTS passwords (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
             account TEXT NOT NULL,
             username TEXT NOT NULL,
             password_encrypted BLOB NOT NULL
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
         )",
         [],
     )?;
@@ -18,13 +29,14 @@ pub fn initialize_db(path: &str) -> Result<Connection> {
 
 pub fn insert_password(
     conn: &Connection,
+    user_id: i64,
     account: &str,
     username: &str,
     password_encrypted: &[u8],
 ) -> Result<()> {
     conn.execute(
-        "INSERT INTO passwords (account, username, password_encrypted) VALUES (?1, ?2, ?3)",
-        params![account, username, password_encrypted],
+        "INSERT INTO passwords (user_id, account, username, password_encrypted) VALUES (?1, ?2, ?3)",
+        params![user_id, account, username, password_encrypted],
     )?;
 
     Ok(())

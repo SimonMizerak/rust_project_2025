@@ -1,6 +1,4 @@
-mod utils;
 use utils::generate_strong_password;
-use password_manager_lib::crypto::*;
 use password_manager_lib::encryption::*;
 use password_manager_lib::database::*;
 use password_manager_lib::encryption::*;
@@ -8,19 +6,18 @@ use base64;
 use std::io::{self, Write};
 use ratatui::layout::Direction;
 use ratatui::widgets::{List, ListItem, ListState};
-use std::{thread, time::Duration};
 use rusqlite::Connection;
 use ratatui::widgets::Wrap;
 use ratatui::text::Text;
 use ratatui::text::Line;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind},
+    event::{self, DisableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Alignment, Constraint, Layout},
+    layout::{Constraint, Layout},
     style::{Color, Modifier, Style},
     text::Span,
     widgets::{Block, Borders, Paragraph},
@@ -29,6 +26,8 @@ use ratatui::{
 use std::error::Error;
 use arboard::Clipboard;
 use crossterm::cursor::Hide;
+
+pub mod utils;
 
 enum AppState {
     Menu,
@@ -87,9 +86,26 @@ enum AppState {
     },
     SearchVault {
         input_buffer: String,
+    },
+    Login {
+        step: usize,
+        username: String,
+        password: String,
+        input_buffer: String, //for inserting info
+        cursor_pos: usize,
+        error: Option<String>,
+    },
+    Register {
+        step: usize,
+        username: String,
+        password: String,
+        input_buffer: String,
+        cursor_pos: usize,
+        error: Option<String>,
     }
 }
 
+// Setting up console environment
 fn main() -> Result<(), Box<dyn Error>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -188,6 +204,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
 
             f.render_stateful_widget(list, chunks[0], &mut list_state);
 
+            //UI
             match state {
                 AppState::Menu => {
                     let paragraph = Paragraph::new("Pick option in menu.")
@@ -494,6 +511,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
             }
         })?;
 
+        //functionality of scenes
         if event::poll(std::time::Duration::from_millis(200))? {
             if let Event::Key(KeyEvent { code, kind: KeyEventKind::Press, .. }) = event::read()? {
                 let selected = list_state.selected().unwrap_or(0);

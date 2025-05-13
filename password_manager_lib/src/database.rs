@@ -125,3 +125,11 @@ pub fn register_user(conn: &Connection, username: &str, password: &str) -> rusql
     )?;
     Ok(())
 }
+
+pub fn get_user_id(conn: &Connection, username: &str) -> Result<i64> {
+    conn.query_row(
+        "SELECT id FROM users WHERE username = ?1",
+        params![username],
+        |row| row.get(0),
+    )
+}

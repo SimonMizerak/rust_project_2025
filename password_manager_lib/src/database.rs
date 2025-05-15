@@ -1,3 +1,4 @@
+use argon2::password_hash::SaltString;
 use rusqlite::{Connection, Result, params};
 use crate::crypto;
 

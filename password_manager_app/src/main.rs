@@ -176,8 +176,8 @@ const START_ITEMS: [&str; 3] = [
 ];
 const MENU_ITEMS: [&str; 4] = [
     "Create vault",
-    "Show all vaults",
     "Search vault",
+    "Show all vaults",
     "Logout",
 ];
 
@@ -197,7 +197,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, key: &[u8
             let items: Vec<ListItem> = match state {
                 AppState::Start => START_ITEMS.iter().map(|item| ListItem::new(*item)).collect(),
                 AppState::Menu {user_id}=> MENU_ITEMS.iter().map(|item| ListItem::new(*item)).collect(),
-                _ => vec![ListItem::new("Currently working in the terminal to the right.")],
+                _ => vec![ListItem::new("Currently working in the right terminal.")],
             };
 
             let chunks = Layout::default()

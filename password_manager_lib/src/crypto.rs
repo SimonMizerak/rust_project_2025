@@ -21,3 +21,15 @@ pub fn verify_password(hash: &str, password: &str) -> bool {
         .verify_password(password.as_bytes(), &parsed_hash)
         .is_ok()
 }
+
+pub fn derive_key_from_password(password: &str, salt_str: &str) -> Vec<u8> {
+    let salt = SaltString::new(salt_str).unwrap();
+    let argon2 = Argon2::default();
+    let hash = argon2
+        .hash_password(password.as_bytes(), &salt)
+        .unwrap()
+        .hash
+        .unwrap();
+
+    hash.as_bytes().to_vec()
+}

@@ -101,6 +101,7 @@ pub fn login_user(conn: &Connection, username: &str, password: &str) -> Option<i
 
 pub fn register_user(conn: &Connection, username: &str, password: &str) -> rusqlite::Result<()> {
     let (hash, _salt) = crypto::hash_password(password);
+    let hashed = crypto::derive_key_from_password(password, stringify!((_salt)));
     conn.execute(
         "INSERT INTO users (username, password_hash) VALUES (?1, ?2)",
         params![username, hash],
